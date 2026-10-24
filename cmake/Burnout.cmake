@@ -27,6 +27,18 @@ if(BDR_BUILD_GAME)
     # them recompiles one file instead of a batch of guest functions.
     set_source_files_properties(${BDR_PROJECT_SOURCES} TARGET_DIRECTORY ps2EntryRunner
         PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
+    # register_functions.cpp fills the 719,555-slot function table in one
+    # constructor of about 216,000 assignments (18 MB). GCC 16 takes 47 minutes
+    # on it at -O3 and 14 at -O2, Clang 7 seconds; GCC at -O0 takes 8 seconds,
+    # and the table is filled once at start-up. Compile it on its own, without
+    # the precompiled header, so -O0 does not reach other files.
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        set_source_files_properties("${BDR_GENERATED_DIR}/register_functions.cpp"
+            TARGET_DIRECTORY ps2EntryRunner PROPERTIES
+            SKIP_UNITY_BUILD_INCLUSION ON
+            SKIP_PRECOMPILE_HEADERS ON
+            COMPILE_OPTIONS "-O0")
+    endif()
     target_sources(ps2EntryRunner PRIVATE ${BDR_GENERATED_CPP} ${BDR_PROJECT_SOURCES})
     target_include_directories(ps2EntryRunner PRIVATE "${BDR_GENERATED_DIR}")
     if(PS2X_ENABLE_RUNNER_PCH)
