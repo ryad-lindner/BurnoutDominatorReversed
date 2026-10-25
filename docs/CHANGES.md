@@ -2,6 +2,10 @@
 
 Complete base kept from `ran-j/PS2Recomp`, at the commit given in `UPSTREAM.json`, under its GPLv3 license. Game files and their translation stay in directories ignored by Git.
 
+## Gamepads switched on after the start are found on Linux (October 25, 2026)
+
+- `ps2_pad.cpp`: with SDL 3, which is the SDL2 of Arch and Fedora through `sdl2-compat`, a gamepad switched on after the game had started was never opened. SDL 3 reads udev's hotplug events only in `SDL_PumpEvents` (`SDL_UDEV_Poll`), and the pad thread called `SDL_GameControllerUpdate` alone, since the window is GLFW's and nothing ran SDL's event loop. The pad thread now pumps SDL's events before the update and empties the queue nobody reads; with SDL2 itself, pumping without SDL video runs the same controller update, which the explicit call repeats, and the flush keeps controller events from piling up unread. SDL's SIGINT and SIGTERM handlers, installed with its event subsystem, turned both signals into that unread `SDL_QUIT`, so Ctrl+C and `kill` no longer stopped the game; the pad sets `SDL_HINT_NO_SIGNAL_HANDLERS` (checked: `raise(SIGTERM)` after `SDL_Init` now ends the process). Checked with SDL 3.4.18 through sdl2-compat 2.32.74: a uinput gamepad created after `SDL_Init` was found within 3.2 s and its removal noticed; in the game started from Steam, a Steam Controller switched on at the start screen was opened, and found again after being switched off and on.
+
 ## The skip_intro setting (October 25, 2026)
 
 - `runtime/host_settings.h`, `host_settings.cpp`, `settings_menu.cpp`: `skip_intro` (default false), written to `settings.ini` with a comment, and an F1 row "Skip intro videos (next start)". The runtime only stores it; `src/burnout_main.cpp` acts on it.
