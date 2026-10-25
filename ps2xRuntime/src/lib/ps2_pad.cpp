@@ -59,6 +59,8 @@ namespace
             // through XInput instead of raw input.
             SDL_SetHint(SDL_HINT_JOYSTICK_THREAD, "1");
             SDL_SetHint(SDL_HINT_JOYSTICK_RAWINPUT, "0");
+            // SDL's handlers would turn SIGINT and SIGTERM into an SDL_QUIT nobody reads.
+            SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
             SDL_SetMainReady();
             if (SDL_Init(SDL_INIT_GAMECONTROLLER) != 0)
             {
@@ -72,7 +74,11 @@ namespace
         SDL_GameController *&controller = g_controller;
         if (!ready)
             return false;
+        // SDL 3 (sdl2-compat on Arch and Fedora) reads udev's hotplug events only in the event
+        // loop. Nothing reads the queue: the window is GLFW's.
+        SDL_PumpEvents();
         SDL_GameControllerUpdate();
+        SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
         if (controller && !SDL_GameControllerGetAttached(controller))
         {
             std::cerr << "[pad] gamepad disconnected" << std::endl;
