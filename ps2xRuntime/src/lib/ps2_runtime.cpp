@@ -2998,7 +2998,8 @@ PS2Runtime::RunResult PS2Runtime::run(const RunOptions &options)
         }
         else
         {
-        if (serial != drawnSerial)
+        const bool newFrame = serial != drawnSerial;
+        if (newFrame)
         {
             ++framesShown;
             const float gap = std::chrono::duration<float, std::milli>(now - lastFrameTime).count();
@@ -3020,7 +3021,6 @@ PS2Runtime::RunResult PS2Runtime::run(const RunOptions &options)
             pausedSinceFrame = menu;
         }
         pausedSinceFrame = pausedSinceFrame || menu;
-        const bool newFrame = serial != drawnSerial;
         drawnSerial = serial;
         lastDraw = now;
         resized = false;

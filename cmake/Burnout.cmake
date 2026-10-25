@@ -28,18 +28,6 @@ if(BDR_BUILD_GAME)
     # them recompiles one file instead of a batch of guest functions.
     set_source_files_properties(${BDR_PROJECT_SOURCES} TARGET_DIRECTORY ps2EntryRunner
         PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
-    # register_functions.cpp fills the 719,555-slot function table in one
-    # constructor of about 216,000 assignments (18 MB). GCC 16 takes 47 minutes
-    # on it at -O3 and 14 at -O2, Clang 7 seconds; GCC at -O0 takes 8 seconds,
-    # and the table is filled once at start-up. Compile it on its own, without
-    # the precompiled header, so -O0 does not reach other files.
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-        set_source_files_properties("${BDR_GENERATED_DIR}/register_functions.cpp"
-            TARGET_DIRECTORY ps2EntryRunner PROPERTIES
-            SKIP_UNITY_BUILD_INCLUSION ON
-            SKIP_PRECOMPILE_HEADERS ON
-            COMPILE_OPTIONS "-O0")
-    endif()
     target_sources(ps2EntryRunner PRIVATE ${BDR_GENERATED_CPP} ${BDR_PROJECT_SOURCES})
     target_include_directories(ps2EntryRunner PRIVATE "${BDR_GENERATED_DIR}")
     if(PS2X_ENABLE_RUNNER_PCH)
@@ -57,10 +45,6 @@ if(BDR_BUILD_GAME)
         # hundreds of KB on a 1 MB thread stack.
         if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
             target_compile_options(ps2EntryRunner PRIVATE /d2OptimizeHugeFunctions)
-            # Except the function table's initializer, one statement per guest function, run
-            # once at start-up: optimizing it takes longer than the rest of the build.
-            set_source_files_properties("${BDR_GENERATED_DIR}/register_functions.cpp" TARGET_DIRECTORY ps2EntryRunner
-                PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON SKIP_PRECOMPILE_HEADERS ON COMPILE_OPTIONS /Od)
         endif()
         # A PDB lets BDR_PROFILE name the guest functions and runtime code it samples.
         target_link_options(ps2EntryRunner PRIVATE $<$<CONFIG:Release>:/DEBUG>)
@@ -69,6 +53,14 @@ if(BDR_BUILD_GAME)
         if(TARGET ps2_runtime)
             target_compile_options(ps2_runtime PRIVATE $<$<CONFIG:Release>:/Z7>)
         endif()
+    endif()
+    # The function table's initializer, one statement per guest function, runs once at
+    # start-up: MSVC and GCC take longer optimizing it than the rest of the build. GCC
+    # ignores a precompiled header built at other optimization options, so it is skipped.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "^(MSVC|GNU)$")
+        set_source_files_properties("${BDR_GENERATED_DIR}/register_functions.cpp" TARGET_DIRECTORY ps2EntryRunner
+            PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON SKIP_PRECOMPILE_HEADERS ON
+            COMPILE_OPTIONS $<IF:$<CXX_COMPILER_ID:MSVC>,/Od,-O0>)
     endif()
 endif()
 
