@@ -477,7 +477,7 @@ static Texture2D UploadFrame(Texture2D &tex, PS2Runtime *rt, uint32_t &outWidth,
             outHeight = s_lastHeight;
             return s_shared;
         }
-        Image blank = GenImageColor(FB_WIDTH, FB_HEIGHT, MAGENTA);
+        Image blank = GenImageColor(FB_WIDTH, FB_HEIGHT, BLACK);
         EnsureFrameTexture(tex, FB_WIDTH, FB_HEIGHT);
         UpdateTexture(tex, blank.data);
         UnloadImage(blank);
