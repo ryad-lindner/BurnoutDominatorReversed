@@ -3,6 +3,7 @@
 #include "ps2_host_backend.h"
 #include "runtime/ee_idle_loops.h"
 #include "runtime/host_settings.h"
+#include "runtime/host_window.h"
 
 #include <algorithm>
 #include <atomic>
@@ -166,7 +167,7 @@ namespace
         }
         case RowAspect: return s.aspect == "stretch" ? "Stretch" : s.aspect;
         case RowFps: return onOff(s.showFps);
-        case RowFullscreen: return onOff(IsWindowState(FLAG_BORDERLESS_WINDOWED_MODE));
+        case RowFullscreen: return onOff(ps2x::windowFullscreen());
         case RowSmooth: return onOff(s.smoothScaling);
         case RowVibration: return onOff(s.vibration);
         case RowFastLoading: return onOff(s.fastLoading);
@@ -223,8 +224,8 @@ namespace
             s.showFps = !s.showFps;
             break;
         case RowFullscreen:
-            ToggleBorderlessWindowed();
-            s.fullscreen = IsWindowState(FLAG_BORDERLESS_WINDOWED_MODE);
+            ps2x::toggleWindowFullscreen();
+            s.fullscreen = ps2x::windowFullscreen();
             break;
         case RowSmooth:
             s.smoothScaling = !s.smoothScaling;

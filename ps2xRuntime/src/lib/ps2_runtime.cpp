@@ -29,6 +29,8 @@
 #include "runtime/ee_idle_loops.h"
 #include "runtime/host_settings.h"
 #include "runtime/host_sleep.h"
+#include "runtime/host_window.h"
+#include "runtime/wayland_surface.h"
 
 #include <iostream>
 #include <stdexcept>
@@ -830,11 +832,18 @@ bool PS2Runtime::initialize(const char *title)
         InitWindow(HOST_WINDOW_WIDTH, HOST_WINDOW_HEIGHT, title); // raylib vita does not support audio
 #else
         const ps2x::HostSettings &settings = ps2x::hostSettings();
+        if (!ps2x::chooseDisplayServer())
+        {
+            std::cerr << "No window system can open the window (no Wayland window, no X11 display)" << std::endl;
+            return false;
+        }
         SetConfigFlags(FLAG_WINDOW_RESIZABLE | (settings.vsync ? FLAG_VSYNC_HINT : 0u));
         InitWindow(settings.windowWidth, settings.windowHeight, title);
+        ps2x::reportDisplayServer();
+        ps2x::tagWindowAsGame();
         SetExitKey(KEY_NULL); // Escape is the game's back button; quitting asks first
         if (settings.fullscreen)
-            ToggleBorderlessWindowed();
+            ps2x::toggleWindowFullscreen();
         if (!settings.gamepadMappings.empty())
         {
             if (char *mappings = LoadFileText(settings.gamepadMappings.c_str()))
@@ -3032,6 +3041,7 @@ PS2Runtime::RunResult PS2Runtime::run(const RunOptions &options)
         const ps2x::PostFrame picture = ps2x::applyPostFilter(shown, ps2x::hostSettings().fxaa, smoothScaling);
 
         BeginDrawing();
+        ps2x::fitViewportToFramebuffer();
         ClearBackground(BLACK);
         const float srcWidth = static_cast<float>(std::max<uint32_t>(1u, presentWidth));
         const float srcHeight = static_cast<float>(std::max<uint32_t>(1u, presentHeight));
@@ -3070,7 +3080,7 @@ PS2Runtime::RunResult PS2Runtime::run(const RunOptions &options)
 
         if (IsKeyPressed(KEY_F11) || (IsKeyPressed(KEY_ENTER) && (IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT))))
         {
-            ToggleBorderlessWindowed();
+            ps2x::toggleWindowFullscreen();
         }
         if (!options.stateFile.empty() && !menu)
         {

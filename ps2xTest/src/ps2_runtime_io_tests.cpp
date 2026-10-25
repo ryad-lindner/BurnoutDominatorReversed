@@ -4,6 +4,7 @@
 #include "ps2_stubs.h"
 #include "runtime/host_settings.h"
 #include "runtime/host_audio.h"
+#include "runtime/host_window.h"
 
 #include <filesystem>
 #include <fstream>
@@ -753,6 +754,7 @@ void register_ps2_runtime_io_tests()
             settings.aspect = "16:9";
             settings.volume = 40;
             settings.refreshRate = "144";
+            settings.displayServer = "wayland";
             settings.keys[4] = {ps2x::kMouseInput, 'J', ps2x::kMouseWheelDown};
             settings.keys[12] = {0, 0, 0};
             t.IsTrue(ps2x::writeHostSettings(path), "defaults are written");
@@ -769,6 +771,7 @@ void register_ps2_runtime_io_tests()
             t.Equals(settings.aspect, std::string("16:9"), "aspect round-trips");
             t.Equals(settings.volume, 40, "volume round-trips");
             t.Equals(settings.refreshRate, std::string("144"), "a frame rate above 60 round-trips");
+            t.Equals(settings.displayServer, std::string("wayland"), "display_server round-trips");
             t.Equals(settings.keys[4][0], ps2x::kMouseInput, "a mouse button binding round-trips");
             t.Equals(settings.keys[4][1], int('J'), "a key binding round-trips");
             t.Equals(settings.keys[4][2], ps2x::kMouseWheelDown, "a wheel binding round-trips");
@@ -777,7 +780,7 @@ void register_ps2_runtime_io_tests()
             {
                 std::ofstream file(path);
                 file << "window_width = 2560  # QHD\nsuper_sampling = 3\nunknown = 1\nfullscreen = yes\n"
-                        "key_l1 = F2 mouse_right\nkey_r1 = NOPE\nrefresh_rate = 501\nrefresh_rate = ask\n";
+                        "key_l1 = F2 mouse_right\nkey_r1 = NOPE\nrefresh_rate = 501\nrefresh_rate = ask\ndisplay_server = tty\n";
             }
             errors.clear();
             t.IsTrue(ps2x::loadHostSettings(path, errors), "the edited file loads");
@@ -791,10 +794,31 @@ void register_ps2_runtime_io_tests()
                      "a frame rate above 500 is reported and ignored");
             t.IsTrue(errors.find(":8:") != std::string::npos && settings.refreshRate == "144",
                      "ask, no longer offered, is reported and ignored");
+            t.IsTrue(errors.find(":9:") != std::string::npos && settings.displayServer == "wayland",
+                     "an unknown display_server is reported and ignored");
             t.IsTrue(errors.find(":2:") != std::string::npos && errors.find(":3:") != std::string::npos,
                      "bad and unknown lines are reported");
             std::filesystem::remove(path);
             settings = saved;
+        });
+
+        tc.Run("display_server picks the window system the session has", [](TestCase &t)
+        {
+            using ps2x::DisplayServer;
+            using ps2x::pickDisplayServer;
+            t.Equals(pickDisplayServer("auto", false, true, true), DisplayServer::Wayland, "auto prefers Wayland");
+            t.Equals(pickDisplayServer("auto", false, true, false), DisplayServer::X11, "auto without Wayland is X11");
+            t.Equals(pickDisplayServer("auto", false, false, false), DisplayServer::Any, "no display leaves it to GLFW");
+            t.Equals(pickDisplayServer("auto", true, true, true), DisplayServer::X11, "started from Steam, auto is X11");
+            t.Equals(pickDisplayServer("auto", true, false, true), DisplayServer::Wayland,
+                     "started from Steam without an X11 display, auto is Wayland");
+            t.Equals(pickDisplayServer("wayland", true, true, true), DisplayServer::Wayland,
+                     "a forced Wayland holds under Steam");
+            t.Equals(pickDisplayServer("x11", false, true, true), DisplayServer::X11, "a forced X11 holds on Wayland");
+            t.Equals(pickDisplayServer("wayland", false, true, false), DisplayServer::X11,
+                     "a forced Wayland without a Wayland display counts as auto");
+            t.Equals(pickDisplayServer("x11", false, false, true), DisplayServer::Wayland,
+                     "a forced X11 without an X11 display counts as auto");
         });
 
         tc.Run("sceMcGetInfo reports formatted and unformatted states", [](TestCase &t)
