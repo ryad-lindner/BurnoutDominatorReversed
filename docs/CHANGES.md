@@ -8,7 +8,7 @@ Complete base kept from `ran-j/PS2Recomp`, at the commit given in `UPSTREAM.json
 
 ## The HUD smoothing patch compiles with GCC (October 24, 2026)
 
-- `cmake/ParallelGSPatches.cmake` (`gs_interface.cpp`): the HUD smoothing patch reads `bdr_smooth_ui_sprites` in the template member `GSInterface::drawing_kick_append`, about 1,700 lines before the patch defines it next to `set_hacks`. The name does not depend on the template's parameters, so GCC and Clang look it up where the template is defined and stop (GCC 16: `'bdr_smooth_ui_sprites' was not declared in this scope [-Wtemplate-body]`); MSVC, where the patch was written and tested, accepts it. The patched code now declares it `extern` in the block that reads it, and the Linux game builds with `PS2X_GS_BACKEND=PARALLEL_GS` again. CI builds the CPU rasterizer only, so it did not see this.
+- `cmake/ParallelGSPatches.cmake` (`gs_interface.cpp`): the HUD smoothing patch reads `bdr_smooth_ui_sprites` in the template member `GSInterface::drawing_kick_append`, about 1,700 lines before the patch defines it next to `set_hacks`. The name does not depend on the template's parameters, so GCC and Clang look it up where the template is defined and stop (GCC 16: `'bdr_smooth_ui_sprites' was not declared in this scope [-Wtemplate-body]`); MSVC, where the patch was written and tested, accepts it. The patched code now declares it `extern` in the block that reads it, and the Linux game builds with `PS2X_GS_BACKEND=PARALLEL_GS` again. CI built the CPU rasterizer only, so it did not see this; it now also builds the runtime with paraLLEl-GS on Linux.
 
 ## VIF1 reads runs of NOPs at once and unpacks strided streams without block counters (October 25, 2026)
 

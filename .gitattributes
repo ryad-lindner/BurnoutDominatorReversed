@@ -2,3 +2,4 @@
 *.jpg binary
 *.ico binary
 *.suprx binary
+*.sh text eol=lf
