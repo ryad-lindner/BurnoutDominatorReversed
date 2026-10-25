@@ -111,6 +111,13 @@ namespace ps2x
                 return parseInt(value, 240, 16384, s.windowHeight);
             if (key == "fullscreen")
                 return parseBool(value, s.fullscreen);
+            if (key == "display_server")
+            {
+                if (value != "auto" && value != "wayland" && value != "x11")
+                    return false;
+                s.displayServer = value;
+                return true;
+            }
             if (key == "vsync")
                 return parseBool(value, s.vsync);
             if (key == "fps_limit")
@@ -258,6 +265,11 @@ namespace ps2x
                 "window_width = " << s.windowWidth << "\n"
                 "window_height = " << s.windowHeight << "\n"
                 "fullscreen = " << (s.fullscreen ? "true" : "false") << "\n"
+                "\n"
+                "# Linux only: the window system. auto uses Wayland when the session has one and X11 otherwise,\n"
+                "# and X11 when Steam started the game (Steam Input follows the focus of X11 windows only);\n"
+                "# wayland or x11 forces one.\n"
+                "display_server = " << s.displayServer << "\n"
                 "\n"
                 "# vsync = true waits for the monitor refresh. fps_limit caps the display loop (0 = no cap).\n"
                 "# The game itself runs at 50 frames per second (PAL), 60 or more: see refresh_rate.\n"

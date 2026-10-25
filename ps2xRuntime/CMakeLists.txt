@@ -84,6 +84,28 @@ else()
         set(PLATFORM "Android" CACHE STRING "" FORCE)
     endif()
 
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # raylib's GLFW is X11-only by default. With Wayland as well, host_window.cpp picks the platform at
+        # run time (settings.ini display_server).
+        option(PS2X_WAYLAND "Build GLFW with native Wayland when its libraries are found" ON)
+        find_package(PkgConfig QUIET)
+        set(PS2X_GLFW_WAYLAND OFF)
+        if(PS2X_WAYLAND AND PkgConfig_FOUND)
+            pkg_check_modules(PS2X_WAYLAND_DEPS QUIET wayland-client>=0.2.7 wayland-cursor wayland-egl xkbcommon>=0.5.0)
+            find_program(PS2X_WAYLAND_SCANNER wayland-scanner)
+            if(PS2X_WAYLAND_DEPS_FOUND AND PS2X_WAYLAND_SCANNER)
+                set(PS2X_GLFW_WAYLAND ON)
+            endif()
+        endif()
+        if(PS2X_GLFW_WAYLAND)
+            message(STATUS "GLFW: native Wayland and X11")
+        else()
+            message(STATUS "GLFW: X11 only (wayland-client, wayland-cursor, wayland-egl, xkbcommon and wayland-scanner not all found)")
+        endif()
+        set(GLFW_BUILD_WAYLAND ${PS2X_GLFW_WAYLAND} CACHE BOOL "" FORCE)
+        set(GLFW_BUILD_X11 ON CACHE BOOL "" FORCE)
+    endif()
+
     FetchContent_Declare(
         raylib
         GIT_REPOSITORY "https://github.com/raysan5/raylib.git"
@@ -426,6 +448,8 @@ add_library(ps2_runtime STATIC
     src/lib/shared_frames.cpp
     src/lib/gs_worker.cpp
     src/lib/host_sleep.cpp
+    src/lib/host_window.cpp
+    src/lib/wayland_surface.cpp
     src/lib/ps2_vif1_interpreter.cpp
     src/lib/vu/ps2_vu1_core.cpp
     src/lib/vu/ps2_vu1_upper.cpp
@@ -700,6 +724,40 @@ target_include_directories(ps2_runtime PUBLIC
 )
 
 target_link_libraries(ps2_runtime PUBLIC ps2_host_backend ffmpeg ps2_iop)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # host_window.cpp talks to GLFW directly (platform choice, full screen).
+    target_include_directories(ps2_runtime PRIVATE "${raylib_SOURCE_DIR}/src/external/glfw/include")
+    # Gives the window its Wayland app id and X11 class (see host_window.cpp), for every program that links the runtime.
+    # --undefined: the wrapper lives in a static library that nothing else would pull in for it.
+    target_link_options(ps2_runtime INTERFACE "-Wl,--wrap=glfwCreateWindow" "-Wl,--undefined=__wrap_glfwCreateWindow")
+
+    # On a native Wayland window the surface is tagged with the content type "game" (wayland_surface.cpp),
+    # from the protocol's XML when wayland-protocols has it.
+    if(PS2X_GLFW_WAYLAND)
+        pkg_check_modules(PS2X_WAYLAND_PROTOCOLS QUIET wayland-protocols)
+        if(PS2X_WAYLAND_PROTOCOLS_FOUND)
+            pkg_get_variable(PS2X_WAYLAND_PROTOCOLS_DIR wayland-protocols pkgdatadir)
+        endif()
+        set(PS2X_CONTENT_TYPE_XML "${PS2X_WAYLAND_PROTOCOLS_DIR}/staging/content-type/content-type-v1.xml")
+        pkg_check_modules(PS2X_WAYLAND_CLIENT QUIET IMPORTED_TARGET wayland-client)
+        if(PS2X_WAYLAND_PROTOCOLS_FOUND AND PS2X_WAYLAND_CLIENT_FOUND AND EXISTS "${PS2X_CONTENT_TYPE_XML}")
+            set(PS2X_WAYLAND_GEN "${CMAKE_CURRENT_BINARY_DIR}/generated/wayland")
+            file(MAKE_DIRECTORY "${PS2X_WAYLAND_GEN}")
+            add_custom_command(
+                OUTPUT "${PS2X_WAYLAND_GEN}/content-type-v1-client-protocol.h" "${PS2X_WAYLAND_GEN}/content-type-v1-protocol.c"
+                COMMAND "${PS2X_WAYLAND_SCANNER}" client-header "${PS2X_CONTENT_TYPE_XML}" "${PS2X_WAYLAND_GEN}/content-type-v1-client-protocol.h"
+                COMMAND "${PS2X_WAYLAND_SCANNER}" private-code "${PS2X_CONTENT_TYPE_XML}" "${PS2X_WAYLAND_GEN}/content-type-v1-protocol.c"
+                DEPENDS "${PS2X_CONTENT_TYPE_XML}"
+                VERBATIM)
+            target_sources(ps2_runtime PRIVATE "${PS2X_WAYLAND_GEN}/content-type-v1-protocol.c")
+            target_include_directories(ps2_runtime PRIVATE "${PS2X_WAYLAND_GEN}")
+            target_compile_definitions(ps2_runtime PRIVATE PS2X_WAYLAND_CONTENT_TYPE=1)
+            target_link_libraries(ps2_runtime PUBLIC PkgConfig::PS2X_WAYLAND_CLIENT)
+        else()
+            message(STATUS "Wayland content type: wayland-protocols with staging/content-type not found, the window is not tagged as a game")
+        endif()
+    endif()
+endif()
 target_link_libraries(ps2EntryRunner
     PRIVATE
     ps2_runtime

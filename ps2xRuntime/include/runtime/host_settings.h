@@ -12,7 +12,9 @@ namespace ps2x
     {
         int windowWidth = 1280;
         int windowHeight = 960;
-        bool fullscreen = false;   // borderless window on the current monitor
+        bool fullscreen = false;   // full screen on the current monitor (borderless window on Windows and macOS)
+        // Linux window system: "auto" (Wayland when the session has one, else X11), "wayland" or "x11".
+        std::string displayServer = "auto";
         bool vsync = true;         // presentation waits for the monitor refresh
         int fpsLimit = 0;          // presentation loop limit, 0 = none (monitor refresh with vsync)
         std::string aspect = "4:3"; // 4:3, 16:9 (in-game widescreen) or stretch

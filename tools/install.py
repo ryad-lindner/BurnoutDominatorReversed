@@ -184,16 +184,19 @@ LINUX_PACKAGES = {
     "debian": ("Debian/Ubuntu", "sudo apt install", {
         "git": "git", "cmake": "cmake ninja-build", "compiler": "g++",
         "libs": "pkg-config libgl-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev "
-                "libvulkan1 libasound2-dev libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev",
+                "libvulkan1 libasound2-dev libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev "
+                "libwayland-dev libxkbcommon-dev wayland-protocols",
         "sdl2": "libsdl2-dev"}),
     "arch": ("Arch", "sudo pacman -S --needed", {
         "git": "git", "cmake": "cmake ninja", "compiler": "base-devel",
-        "libs": "pkgconf mesa vulkan-icd-loader libx11 libxrandr libxinerama libxcursor libxi alsa-lib ffmpeg",
+        "libs": "pkgconf mesa vulkan-icd-loader libx11 libxrandr libxinerama libxcursor libxi alsa-lib ffmpeg "
+                "wayland libxkbcommon wayland-protocols",
         "sdl2": "sdl2-compat"}),
     "fedora": ("Fedora", "sudo dnf install", {
         "git": "git", "cmake": "cmake ninja-build", "compiler": "gcc-c++",
         "libs": "pkgconf-pkg-config mesa-libGL-devel vulkan-loader libX11-devel libXrandr-devel libXinerama-devel "
-                "libXcursor-devel libXi-devel alsa-lib-devel ffmpeg-free-devel",
+                "libXcursor-devel libXi-devel alsa-lib-devel ffmpeg-free-devel wayland-devel libxkbcommon-devel "
+                "wayland-protocols-devel",
         "sdl2": "SDL2-devel"}),
 }
 

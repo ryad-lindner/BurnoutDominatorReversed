@@ -73,19 +73,19 @@ To update: `git pull`, then `Installer.bat` again.
 <details>
 <summary><b>Linux</b></summary>
 
-Packages (`SDL2` is for gamepads), Debian/Ubuntu:
+Packages (`SDL2` is for gamepads; the Wayland packages are optional: without them the window is an X11 window, through XWayland on a Wayland desktop), Debian/Ubuntu:
 
 ```bash
 sudo apt install git python3 cmake ninja-build g++ pkg-config libgl-dev libx11-dev libxrandr-dev libxinerama-dev \
   libxcursor-dev libxi-dev libvulkan1 libasound2-dev libavcodec-dev libavformat-dev libavutil-dev \
-  libswresample-dev libswscale-dev libsdl2-dev
+  libswresample-dev libswscale-dev libsdl2-dev libwayland-dev libxkbcommon-dev wayland-protocols
 ```
 
 Arch:
 
 ```bash
 sudo pacman -S --needed base-devel git python cmake ninja pkgconf mesa vulkan-icd-loader libx11 libxrandr \
-  libxinerama libxcursor libxi alsa-lib ffmpeg sdl2-compat
+  libxinerama libxcursor libxi alsa-lib ffmpeg sdl2-compat wayland libxkbcommon wayland-protocols
 ```
 
 Fedora (with RPM Fusion's FFmpeg, `ffmpeg-devel` instead of `ffmpeg-free-devel`):
@@ -93,7 +93,7 @@ Fedora (with RPM Fusion's FFmpeg, `ffmpeg-devel` instead of `ffmpeg-free-devel`)
 ```bash
 sudo dnf install git python3 cmake ninja-build gcc-c++ pkgconf-pkg-config mesa-libGL-devel vulkan-loader \
   libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel alsa-lib-devel \
-  ffmpeg-free-devel SDL2-devel
+  ffmpeg-free-devel SDL2-devel wayland-devel libxkbcommon-devel wayland-protocols-devel
 ```
 
 Then:
