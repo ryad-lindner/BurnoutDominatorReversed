@@ -3,3 +3,5 @@
 *.ico binary
 *.suprx binary
 *.sh text eol=lf
+# Upstream's scripts are committed with CRLF; upstream files are never normalised.
+vita/*.sh -text
