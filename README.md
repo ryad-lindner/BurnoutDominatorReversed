@@ -148,6 +148,7 @@ Every key can be changed in **F1** → *Keyboard and mouse controls*: up to thre
 | `hud_smoothing` | true | the race HUD smooth instead of blocky at 2x and 4x |
 | `progressive_scan` | true | whole frames, no interlacing lines |
 | `fast_loading` | true | loading screens run faster than real time |
+| `skip_intro` | false | leaves out the logos and the intro movie: the game goes straight to the short intro screen that leads to the start screen, with its music (from the next start; `--skip-intro` does it for one run) |
 | `keep_speed` | true | when the graphics cannot keep up, the game runs more simulation steps per drawn frame instead of slowing down (from the next race) |
 | `stick_deadzone` | 12 | percent |
 | `vibration` | true | the game's pad vibration on your gamepad |

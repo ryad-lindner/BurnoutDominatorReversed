@@ -68,6 +68,8 @@ October 18: playable. Sound plays through the emulated SPU2 (PCSX2's voice, volu
 
 October 19: speed. Over a replay of 1,500 frames of a six-car race the wall time went from 12.7 to 8.9 s, the VU1 worker's CPU time from 11.8 to 8.4 s and the game thread's from 9.8 to 6.5 s, the GIF stream staying identical at every step (CHANGES.md). The largest gains: DMA buffers that VIF0 chains never returned to their pool (the game thread faulted in fresh pages for every display list), ACC kept in a register through the compiled VU1 programs' matrix products, reads at the start of a block settled from the pairs on every way into it, the SSE versions of the conversion and clipping instructions, copies removed on the PATH3 texture path, and on the game thread the scratchpad's 128-bit accesses and the IOP's per-instruction calls made direct. The CI builds on GCC, Clang and MSVC again (broken since the save states).
 
+October 25: `skip_intro` (README) leaves out the logos and the intro movie at start-up and keeps the short intro that starts the start screen's music; checked in a windowed run from Steam (FINDINGS E023, BOOT.md §16).
+
 To resume on the machine that has the ISO (the observation variables are described in BOOT.md §10):
 
 ```powershell

@@ -20,6 +20,7 @@ if(BDR_BUILD_GAME)
     set(BDR_PROJECT_SOURCES
         "${PROJECT_SOURCE_DIR}/src/burnout_frame_rate.cpp"
         "${PROJECT_SOURCE_DIR}/src/burnout_main.cpp"
+        "${PROJECT_SOURCE_DIR}/src/burnout_pages.cpp"
         "${PROJECT_SOURCE_DIR}/src/burnout_overrides.cpp"
         "${PROJECT_SOURCE_DIR}/src/burnout_profile.cpp"
         "${PROJECT_SOURCE_DIR}/src/burnout_texts.cpp")
@@ -77,6 +78,7 @@ if(TARGET ps2_runtime AND TARGET ps2_test_function_table)
         "${PROJECT_SOURCE_DIR}/tests/native/burnout_overrides_tests.cpp"
         "${PROJECT_SOURCE_DIR}/src/burnout_frame_rate.cpp"
         "${PROJECT_SOURCE_DIR}/src/burnout_overrides.cpp"
+        "${PROJECT_SOURCE_DIR}/src/burnout_pages.cpp"
         "${PROJECT_SOURCE_DIR}/src/burnout_texts.cpp"
         $<TARGET_OBJECTS:ps2_test_function_table>)
     target_include_directories(burnout_overrides_tests PRIVATE "${PROJECT_SOURCE_DIR}/ps2xRuntime/include")

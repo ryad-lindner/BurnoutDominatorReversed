@@ -1,5 +1,6 @@
 // Project runner: original disc sectors, local saves and bounded diagnostics.
 #include "burnout_frame_rate.h"
+#include "burnout_pages.h"
 #include "burnout_profile.h"
 #include "burnout_texts.h"
 #include "ps2_runtime.h"
@@ -38,6 +39,7 @@ struct Options {
     uint64_t saveStateAt = 0;                // VSync at which to save to the slot (headless use)
     std::vector<uint32_t> traceCalls, traceWatch;
     bool headless = false;
+    bool skipIntro = false;
     int seconds = 0;          // 0: unbounded (windowed only)
     int statusMs = 0;         // 0: no periodic status line
     int dumpEveryMs = 1000;
@@ -48,6 +50,7 @@ constexpr const char* kUsage =
     "       [--headless] [--seconds N] [--status-ms N] [--dump-frames <directory> [--dump-every-ms N]]\n"
     "       [--trace-calls 0xADDR,...] [--trace-watch 0xADDR,...]\n"
     "       [--state <file>] [--load-state <file>] [--save-state-at VSYNC] [--settings <file>]\n"
+    "       [--skip-intro]   (leave out the logos and the intro movie: settings.ini skip_intro for this run)\n"
     "Save states: F5 saves to --state (default <save>/../states/quick.bdrstate), F7 loads it.";
 
 int parseInt(const std::string& key, const char* text, int low, int high) {
@@ -67,6 +70,7 @@ Options parse(int argc, char** argv) {
     for (int i = 2; i < argc; ++i) {
         const std::string key = argv[i];
         if (key == "--headless") { options.headless = true; continue; }
+        if (key == "--skip-intro") { options.skipIntro = true; continue; }
         if (++i == argc) throw std::runtime_error("Missing value for " + key);
         if (key == "--iso") options.iso = std::filesystem::absolute(argv[i]);
         else if (key == "--disc") options.disc = std::filesystem::absolute(argv[i]);
@@ -229,6 +233,10 @@ int exitCode(const PS2Runtime& runtime, const PS2Runtime::RunResult& result) {
 // 0x1838A8 is the page manager's go-to-page (a0 = manager 0x43A6D0, a1 = page name), called by
 // the GoToPage native 0x1893C0.
 //
+// With skip_intro (settings.ini, or --skip-intro; read at start-up) the boot leaves out the logos
+// and the intro movie: the go-to-page gets SU_Intro instead (burnout_pages.h, E023 in
+// docs/FINDINGS.md).
+//
 // A save state keeps the rate it was taken at. When the game is in the front end (game state
 // 0x51B908 = 0x4C1B38) and its video mode (0x43E7C0 + 0x4A8: 0 = 60 Hz, 2 = 50 Hz) is not the
 // setting, the next page change does the same, plus the front-end simulation step that the game
@@ -247,6 +255,7 @@ int exitCode(const PS2Runtime& runtime, const PS2Runtime::RunResult& result) {
 // the continuation runs the next one.
 PS2Runtime::RecompiledFunction g_goToPage = nullptr;
 uint32_t g_continuation = 0; // guest address of continueFrequencySkip
+burnout::IntroSkip g_introSkip{false};
 
 struct FrequencySkip {
     int step = 0;
@@ -305,33 +314,37 @@ void continueFrequencySkip(uint8_t* rdram, R5900Context* ctx, PS2Runtime* runtim
     }
 }
 
+bool skippedIntro(bool redirected, bool trace) {
+    if (redirected) {
+        std::printf("[game] skipped the intro videos\n");
+        if (trace)
+            std::printf("[page] -> SU_Intro\n");
+    }
+    return redirected;
+}
+
 void goToPage(uint8_t* rdram, R5900Context* ctx, PS2Runtime* runtime) {
     const std::string& rate = ps2x::hostSettings().refreshRate;
     const uint32_t name = getRegU32(ctx, 5) & (PS2_RAM_SIZE - 1);
     static const bool tracePages = std::getenv("BDR_TRACE_PAGES") != nullptr; // the pages the game goes to
     if (tracePages)
         std::printf("[page] %.40s\n", reinterpret_cast<const char*>(rdram + name));
-    const auto isPage = [&](const char* page) {
-        for (size_t i = 0;; ++i) {
-            if (name + i >= PS2_RAM_SIZE || std::tolower(rdram[name + i]) != page[i])
-                return false;
-            if (page[i] == 0)
-                return true;
-        }
-    };
+    const burnout::Page page = burnout::classifyPage(rdram + name, PS2_RAM_SIZE - name);
     const uint32_t wanted = rate == "50" ? 2u : 0u; // 60 Hz for higher frame rates too
     const int asked = std::atoi(rate.c_str());
     const uint32_t frameRate = asked > 60 ? static_cast<uint32_t>(asked) : 0u;
     const auto hz = [](uint32_t mode, uint32_t perSecond) {
         return perSecond ? std::to_string(perSecond) : std::string(mode == 2 ? "50" : "60");
     };
-    if (g_continuation != 0 && isPage("su_frequency")) {
-        std::memcpy(rdram + name, "SU_Movie", 9); // the name buffer held "SU_Frequency"
+    if (g_continuation != 0 && page == burnout::Page::Frequency) {
+        if (!skippedIntro(g_introSkip.onFrequencySkip(rdram + name), tracePages))
+            std::memcpy(rdram + name, "SU_Movie", 9); // the name buffer held "SU_Frequency"
         g_skip = FrequencySkip{0, wanted, ctx->r[4], ctx->r[5], ctx->r[31], false, frameRate};
         std::printf("[game] skipped the 50/60 Hz question: %s Hz\n", hz(wanted, frameRate).c_str());
         continueFrequencySkip(rdram, ctx, runtime);
         return;
     }
+    skippedIntro(g_introSkip.onGoToPage(page, rdram + name), tracePages);
     uint32_t mode = 0, gameState = 0;
     std::memcpy(&mode, rdram + 0x43EC68u, sizeof(mode));
     std::memcpy(&gameState, rdram + 0x51B908u, sizeof(gameState));
@@ -456,6 +469,8 @@ int main(int argc, char** argv) {
         if (!ps2x::loadHostSettings(options.settings, settingsErrors) && !options.headless)
             ps2x::writeHostSettings(options.settings);
         std::cerr << settingsErrors;
+        // A restored state is past the boot.
+        g_introSkip = burnout::IntroSkip((options.skipIntro || ps2x::hostSettings().skipIntro) && options.loadState.empty());
         // The save messages speak of this computer instead of the memory card and the console.
         burnout::registerPcTexts();
         PS2Runtime runtime;

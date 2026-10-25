@@ -138,6 +138,8 @@ namespace ps2x
                 return parseBool(value, s.fastLoading);
             if (key == "keep_speed")
                 return parseBool(value, s.keepSpeed);
+            if (key == "skip_intro")
+                return parseBool(value, s.skipIntro);
             if (key == "vibration")
                 return parseBool(value, s.vibration);
             if (key == "stick_deadzone")
@@ -287,6 +289,9 @@ namespace ps2x
                 "# keep_speed keeps the game's speed when the graphics cannot keep up: the game runs more\n"
                 "# simulation steps per drawn frame instead of slowing down. It starts with the next race.\n"
                 "keep_speed = " << (s.keepSpeed ? "true" : "false") << "\n"
+                "# skip_intro leaves out the logos and the intro movie at start-up: the game goes on to the\n"
+                "# intro screen that leads to the start screen. It applies from the next start.\n"
+                "skip_intro = " << (s.skipIntro ? "true" : "false") << "\n"
                 "\n"
                 "# Gamepads: any Xbox, PlayStation 4/5 or SDL-compatible pad works next to the keyboard.\n"
                 "# stick_deadzone is a percentage. gamepad_mappings may name an extra gamecontrollerdb.txt file.\n"
