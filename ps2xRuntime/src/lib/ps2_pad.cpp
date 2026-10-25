@@ -4,9 +4,11 @@
 #include "runtime/host_settings.h"
 #include "runtime/settings_menu.h"
 #include <algorithm>
+#include <mutex>
 #include <cmath>
 #include <cstring>
 #include <utility>
+#include <vector>
 
 #if defined(PS2X_HAS_SDL2)
 #define SDL_MAIN_HANDLED
@@ -44,7 +46,63 @@ namespace
     };
 
 #if defined(PS2X_HAS_SDL2)
+    // Every attached game controller is open. The player's, g_controller, is the first to press
+    // a button and stays theirs until it is disconnected; then the next press takes the pad, as
+    // on consoles. Only the pad thread changes them; g_rumbleMutex keeps g_controller open while
+    // the game thread sets its motors.
+    struct OpenController
+    {
+        SDL_GameController *controller;
+        uint16_t pressed;
+        // Until 250 ms after the open, buttons down are taken as the resting state, not as a
+        // press: a pedal at rest may be one, and some drivers report the state only later.
+        Uint32 opened;
+    };
+    std::vector<OpenController> g_controllers;
+    // Controllers whose open failed, retried a while later: udev may not have applied the
+    // device's permissions yet.
+    std::vector<std::pair<SDL_JoystickID, Uint32>> g_failedOpens;
     SDL_GameController *g_controller = nullptr;
+    std::mutex g_rumbleMutex;
+    uint32_t g_rumble = 0u; // low frequency motor << 16 | high frequency motor
+    bool g_vibration = false;
+
+    // The game sets the motors when they change; a long duration keeps them running until then.
+    void rumble(SDL_GameController *controller, uint32_t motors)
+    {
+        SDL_GameControllerRumble(controller, static_cast<Uint16>(motors >> 16), static_cast<Uint16>(motors),
+                                 motors ? 10000u : 0u);
+    }
+
+    uint16_t pressedButtons(SDL_GameController *controller)
+    {
+        static constexpr std::pair<SDL_GameControllerButton, uint16_t> kButtons[] = {
+            {SDL_CONTROLLER_BUTTON_DPAD_UP, PAD_UP}, {SDL_CONTROLLER_BUTTON_DPAD_DOWN, PAD_DOWN},
+            {SDL_CONTROLLER_BUTTON_DPAD_LEFT, PAD_LEFT}, {SDL_CONTROLLER_BUTTON_DPAD_RIGHT, PAD_RIGHT},
+            {SDL_CONTROLLER_BUTTON_A, PAD_CROSS}, {SDL_CONTROLLER_BUTTON_B, PAD_CIRCLE},
+            {SDL_CONTROLLER_BUTTON_X, PAD_SQUARE}, {SDL_CONTROLLER_BUTTON_Y, PAD_TRIANGLE},
+            {SDL_CONTROLLER_BUTTON_LEFTSHOULDER, PAD_L1}, {SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, PAD_R1},
+            {SDL_CONTROLLER_BUTTON_START, PAD_START}, {SDL_CONTROLLER_BUTTON_BACK, PAD_SELECT},
+            {SDL_CONTROLLER_BUTTON_LEFTSTICK, PAD_L3}, {SDL_CONTROLLER_BUTTON_RIGHTSTICK, PAD_R3}};
+        uint16_t pressed = 0u;
+        for (const auto &[button, mask] : kButtons)
+            if (SDL_GameControllerGetButton(controller, button))
+                pressed |= mask;
+        constexpr Sint16 kTriggerPressed = 8000;
+        if (SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > kTriggerPressed)
+            pressed |= PAD_L2;
+        if (SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > kTriggerPressed)
+            pressed |= PAD_R2;
+        return pressed;
+    }
+
+    bool isKnown(SDL_JoystickID id)
+    {
+        return std::any_of(g_controllers.begin(), g_controllers.end(), [id](const OpenController &open)
+                           { return SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(open.controller)) == id; }) ||
+               std::any_of(g_failedOpens.begin(), g_failedOpens.end(), [id](const auto &failed)
+                           { return failed.first == id; });
+    }
 
     // SDL2 game controllers: Xbox, PlayStation 3/4/5, Switch and the SDL_GameControllerDB
     // pads, over USB or Bluetooth, with or without Steam. Opened and pumped by the thread
@@ -71,7 +129,6 @@ namespace
                 SDL_GameControllerAddMappingsFromFile(ps2x::hostSettings().gamepadMappings.c_str());
             return true;
         }();
-        SDL_GameController *&controller = g_controller;
         if (!ready)
             return false;
         // SDL 3 (sdl2-compat on Arch and Fedora) reads udev's hotplug events only in the event
@@ -79,34 +136,64 @@ namespace
         SDL_PumpEvents();
         SDL_GameControllerUpdate();
         SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
-        if (controller && !SDL_GameControllerGetAttached(controller))
+        for (size_t i = g_controllers.size(); i-- > 0;)
         {
+            SDL_GameController *controller = g_controllers[i].controller;
+            if (SDL_GameControllerGetAttached(controller))
+                continue;
             std::cerr << "[pad] gamepad disconnected" << std::endl;
+            if (controller == g_controller)
+            {
+                std::lock_guard lock(g_rumbleMutex);
+                g_controller = nullptr;
+            }
             SDL_GameControllerClose(controller);
-            controller = nullptr;
+            g_controllers.erase(g_controllers.begin() + static_cast<std::ptrdiff_t>(i));
         }
-        for (int index = 0; !controller && index < SDL_NumJoysticks(); ++index)
-            if (SDL_IsGameController(index) && (controller = SDL_GameControllerOpen(index)))
-                std::cerr << "[pad] gamepad: " << SDL_GameControllerName(controller) << std::endl;
+        const Uint32 now = SDL_GetTicks();
+        std::erase_if(g_failedOpens, [now](const auto &failed)
+                      { return now - failed.second >= 2000u; });
+        for (int index = 0; index < SDL_NumJoysticks(); ++index)
+        {
+            const SDL_JoystickID id = SDL_JoystickGetDeviceInstanceID(index);
+            if (!SDL_IsGameController(index) || isKnown(id))
+                continue;
+            if (SDL_GameController *controller = SDL_GameControllerOpen(index))
+            {
+                g_controllers.push_back({controller, 0u, now});
+                std::cerr << "[pad] gamepad connected: " << SDL_GameControllerName(controller) << std::endl;
+            }
+            else
+            {
+                std::cerr << "[pad] gamepad not opened: " << SDL_GetError() << std::endl;
+                g_failedOpens.emplace_back(id, now);
+            }
+        }
+        for (OpenController &open : g_controllers)
+        {
+            const uint16_t pressed = pressedButtons(open.controller);
+            if (now - open.opened >= 250u && !g_controller && (pressed & ~open.pressed) != 0u)
+            {
+                std::lock_guard lock(g_rumbleMutex);
+                g_controller = open.controller;
+                if (g_vibration)
+                    rumble(g_controller, g_rumble);
+                std::cerr << "[pad] gamepad: " << SDL_GameControllerName(g_controller) << std::endl;
+            }
+            open.pressed = pressed;
+            if (open.controller == g_controller)
+                input.pressed = pressed;
+        }
+        SDL_GameController *controller = g_controller;
         if (!controller)
             return false;
 
-        static constexpr std::pair<SDL_GameControllerButton, uint16_t> kButtons[] = {
-            {SDL_CONTROLLER_BUTTON_DPAD_UP, PAD_UP}, {SDL_CONTROLLER_BUTTON_DPAD_DOWN, PAD_DOWN},
-            {SDL_CONTROLLER_BUTTON_DPAD_LEFT, PAD_LEFT}, {SDL_CONTROLLER_BUTTON_DPAD_RIGHT, PAD_RIGHT},
-            {SDL_CONTROLLER_BUTTON_A, PAD_CROSS}, {SDL_CONTROLLER_BUTTON_B, PAD_CIRCLE},
-            {SDL_CONTROLLER_BUTTON_X, PAD_SQUARE}, {SDL_CONTROLLER_BUTTON_Y, PAD_TRIANGLE},
-            {SDL_CONTROLLER_BUTTON_LEFTSHOULDER, PAD_L1}, {SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, PAD_R1},
-            {SDL_CONTROLLER_BUTTON_START, PAD_START}, {SDL_CONTROLLER_BUTTON_BACK, PAD_SELECT},
-            {SDL_CONTROLLER_BUTTON_LEFTSTICK, PAD_L3}, {SDL_CONTROLLER_BUTTON_RIGHTSTICK, PAD_R3}};
-        for (const auto &[button, mask] : kButtons)
-            if (SDL_GameControllerGetButton(controller, button))
-                input.pressed |= mask;
-        constexpr Sint16 kTriggerPressed = 8000;
-        if (SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > kTriggerPressed)
-            input.pressed |= PAD_L2;
-        if (SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > kTriggerPressed)
-            input.pressed |= PAD_R2;
+        if (ps2x::hostSettings().vibration != g_vibration)
+        {
+            std::lock_guard lock(g_rumbleMutex);
+            g_vibration = !g_vibration;
+            rumble(controller, g_vibration ? g_rumble : 0u);
+        }
         auto axis = [&](SDL_GameControllerAxis which)
         { return std::max(-1.0f, SDL_GameControllerGetAxis(controller, which) / 32767.0f); };
         input.lx = axis(SDL_CONTROLLER_AXIS_LEFTX);
@@ -168,7 +255,7 @@ bool PSPadBackend::readState(int /*port*/, int /*slot*/, uint8_t *data, size_t s
     auto clearBit = [&btns](uint16_t mask)
     { btns &= ~mask; };
 
-    // The first connected gamepad and the keyboard both drive the DualShock 2, at any time.
+    // The player's gamepad and the keyboard both drive the DualShock 2, at any time.
     GamepadInput pad;
     if (readGamepad(pad))
     {
@@ -236,12 +323,10 @@ bool PSPadBackend::readState(int /*port*/, int /*slot*/, uint8_t *data, size_t s
 void ps2x::setGamepadRumble(bool small, uint8_t large)
 {
 #if defined(PS2X_HAS_SDL2)
-    if (!g_controller || !ps2x::hostSettings().vibration)
-        return;
-    // The game sets the motors when they change; a long duration keeps them running until then.
-    const Uint16 low = static_cast<Uint16>(large * 257u);
-    const Uint16 high = small ? 0xFFFFu : 0u;
-    SDL_GameControllerRumble(g_controller, low, high, low || high ? 10000u : 0u);
+    std::lock_guard lock(g_rumbleMutex);
+    g_rumble = large * 257u << 16 | (small ? 0xFFFFu : 0u);
+    if (g_controller && g_vibration)
+        rumble(g_controller, g_rumble);
 #else
     (void)small;
     (void)large;

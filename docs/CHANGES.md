@@ -2,6 +2,10 @@
 
 Complete base kept from `ran-j/PS2Recomp`, at the commit given in `UPSTREAM.json`, under its GPLv3 license. Game files and their translation stay in directories ignored by Git.
 
+## The first gamepad pressed is the player's (October 25, 2026)
+
+- `ps2_pad.cpp`: the pad read the first game controller SDL listed, whether or not anyone held it, and kept it until it was disconnected: a second gamepad, or a device nobody uses (a wheel's pedals, a virtual pad), could leave the one in the player's hands ignored. Every attached controller is now open, and the first to have a button or trigger pressed drives the pad until it is disconnected; then the next press takes it, as on consoles. Buttons down in the first 250 ms after a controller appears do not count (a pedal at rest may read as pressed, and some drivers report the state only after the open), and sticks never do. A controller that fails to open is tried again 2 s later instead of on every poll; the log names each controller opened and each failed open. The game thread sets the motors under a lock that the pad thread takes to change the player's controller, so a disconnect no longer races the rumble call; a newly claimed controller takes over the running motors, and turning vibration off stops them. Without SDL2, raylib's gamepads still use the first one.
+
 ## Native Wayland window and real full screen on Linux (October 25, 2026)
 
 - `CMakeLists.txt`: raylib's bundled GLFW was built for X11 only, so on a Wayland desktop the game ran through XWayland. On Linux (`CMAKE_SYSTEM_NAME` is `Linux`) it is now built with Wayland as well as X11 (`GLFW_BUILD_WAYLAND`, `GLFW_BUILD_X11`) when `pkg-config` finds `wayland-client`, `wayland-cursor`, `wayland-egl` and `xkbcommon` and `wayland-scanner` is installed (GLFW ships the protocol files it needs); otherwise it stays X11-only and CMake says so. `-DPS2X_WAYLAND=OFF` keeps it X11-only. The runtime gets GLFW's include directory for `host_window.cpp`.
