@@ -74,7 +74,7 @@ The VU0 and VU1 microprograms the game uploads are game code too. A run with `--
 python -m unittest discover -s tests/python
 ```
 
-Native test programs are built by `project.py build`: `ps2x_tests` (run it from the repository root), `ps2_iop_emulator_tests`, `ps2_iop_import_tests`, `ps2_iop_compatibility_tests`, `ps2_iop_import_version_tests`, `ps2_iso9660_tests`, `ps2_spu2_tests` and `burnout_overrides_tests`. CI ([`.github/workflows/build.yml`](../.github/workflows/build.yml)) runs them with GCC, Clang and MSVC.
+Native test programs are built by `project.py build`: `ps2x_tests` (run it from the repository root), `ps2_iop_emulator_tests`, `ps2_iop_import_tests`, `ps2_iop_compatibility_tests`, `ps2_iop_import_version_tests`, `ps2_iso9660_tests`, `ps2_spu2_tests` and `burnout_overrides_tests`. CI ([`.github/workflows/build.yml`](../.github/workflows/build.yml)) runs them with GCC, Clang and MSVC, and on Linux also builds the runtime with the paraLLEl-GS backend.
 
 ## Working without the disc on the build machine
 
@@ -92,3 +92,4 @@ Native test programs are built by `project.py build`: `ps2x_tests` (run it from 
 | `tests/` | Python tests of the tools, native tests of the bindings |
 | `docs/` | status, boot analysis, findings, identified SDK functions, upstream changes |
 | `Installer.bat`, `Play.bat` | Windows one-click install and launch |
+| `play.sh` | Linux and macOS launch |

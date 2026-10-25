@@ -248,6 +248,54 @@ class InstallTests(unittest.TestCase):
         linux = "\n".join(install.final_message(False))
         self.assertNotIn("Play.bat", linux)
         self.assertIn("python3 tools/project.py run", linux)
+        self.assertIn("./play.sh", linux)
+        self.assertNotIn("menu yet", linux)
+
+    def test_install_hints_follow_the_system(self):
+        arch = 'NAME="CachyOS"\nID=cachyos\nID_LIKE=arch\n'
+        fedora = 'ID=nobara\nID_LIKE="rhel centos fedora"\n'
+        ubuntu = 'ID=ubuntu\nID_LIKE=debian\n'
+        self.assertIn("pacman -S --needed", install.install_hint("libs", arch, "linux"))
+        self.assertIn("sdl2", install.install_hint("sdl2", arch, "linux"))
+        self.assertIn("dnf install", install.install_hint("cmake", fedora, "linux"))
+        self.assertIn("libsdl2-dev", install.install_hint("sdl2", ubuntu, "linux"))
+        rhel = 'ID="rhel"\nID_LIKE="fedora"\n'
+        self.assertIn("Fedora: sudo dnf install", install.install_hint("libs", rhel, "linux"))
+        for unknown in ("", "ID=gentoo\n", 'ID="opensuse-tumbleweed"\nID_LIKE="opensuse suse"\n'):
+            self.assertIn("apt install", install.install_hint("git", unknown, "linux"))
+        self.assertEqual(install.linux_family("ID='arch'\n"), "arch")
+        with mock.patch.object(install.Path, "read_text", side_effect=FileNotFoundError):
+            self.assertIn("apt install", install.install_hint("git", platform="linux"))
+        self.assertEqual(install.install_hint("cmake", platform="darwin"), "macOS: brew install cmake ninja")
+        self.assertEqual(install.install_hint("compiler", platform="darwin"), "macOS: xcode-select --install")
+
+    def test_readme_lists_the_installer_packages(self):
+        readme = (install.ROOT / "README.md").read_text(encoding="utf-8")
+        blocks = [block.split("```", 1)[0] for block in readme.split("```bash\n")[1:]]
+        for _, command, packages in install.LINUX_PACKAGES.values():
+            listed = [block for block in blocks if block.startswith(command + " ")]
+            self.assertEqual(len(listed), 1, command)
+            words = set(listed[0][len(command):].replace("\\", " ").split())
+            self.assertLessEqual(set(" ".join(packages.values()).split()), words, command)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "the library probes run on Linux")
+    def test_missing_sdl2_is_a_warning(self):
+        probes = []
+
+        def run(command, **_):
+            probes.append(command)
+            return mock.Mock(returncode=1 if command[-1] == "sdl2" else 0)
+
+        stderr = io.StringIO()
+        with mock.patch.object(install.shutil, "which", return_value="/usr/bin/tool"), \
+                mock.patch.object(install, "cached_cmake", return_value="/usr/bin/cmake"), \
+                mock.patch.object(install.subprocess, "run", side_effect=run), \
+                mock.patch.object(install, "install_hint", side_effect=lambda role: f"hint {role}"), \
+                contextlib.redirect_stderr(stderr):
+            install.check_prerequisites(self.work, self.root / "build", 0)
+        self.assertEqual(probes[-1], ["pkg-config", "--exists", "sdl2"])
+        self.assertIn("SDL2", stderr.getvalue())
+        self.assertIn("hint sdl2", stderr.getvalue())
 
     def test_errors_are_reported_without_traceback(self):
         failures = [install.SetupError("x"), OSError(28, "No space left on device"), KeyError("work_dir"),

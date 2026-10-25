@@ -179,6 +179,55 @@ def required_space(disc_ready: bool, game_built: bool) -> int:
     return (0 if disc_ready else EXTRACTION_BYTES) + TRANSLATION_BYTES + (0 if game_built else BUILD_BYTES)
 
 
+# Linux packages by distribution family: (name shown, install command, packages by role).
+LINUX_PACKAGES = {
+    "debian": ("Debian/Ubuntu", "sudo apt install", {
+        "git": "git", "cmake": "cmake ninja-build", "compiler": "g++",
+        "libs": "pkg-config libgl-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev "
+                "libvulkan1 libasound2-dev libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev",
+        "sdl2": "libsdl2-dev"}),
+    "arch": ("Arch", "sudo pacman -S --needed", {
+        "git": "git", "cmake": "cmake ninja", "compiler": "base-devel",
+        "libs": "pkgconf mesa vulkan-icd-loader libx11 libxrandr libxinerama libxcursor libxi alsa-lib ffmpeg",
+        "sdl2": "sdl2-compat"}),
+    "fedora": ("Fedora", "sudo dnf install", {
+        "git": "git", "cmake": "cmake ninja-build", "compiler": "gcc-c++",
+        "libs": "pkgconf-pkg-config mesa-libGL-devel vulkan-loader libX11-devel libXrandr-devel libXinerama-devel "
+                "libXcursor-devel libXi-devel alsa-lib-devel ffmpeg-free-devel",
+        "sdl2": "SDL2-devel"}),
+}
+
+
+def linux_family(os_release: str) -> str:
+    """Distribution family from the text of /etc/os-release (ID, then ID_LIKE); apt hints by default."""
+    values = {}
+    for line in os_release.splitlines():
+        key, _, value = line.partition("=")
+        values[key.strip()] = value.strip().strip("\"'").lower()
+    for name in [values.get("ID", "")] + values.get("ID_LIKE", "").split():
+        if name in ("arch", "manjaro", "cachyos", "endeavouros"):
+            return "arch"
+        if name == "fedora":
+            return "fedora"
+    return "debian"
+
+
+MACOS_PACKAGES = {"git": "git", "cmake": "cmake ninja"}
+
+
+def install_hint(role: str, os_release: str | None = None, platform: str = sys.platform) -> str:
+    """Install hint for a package role on the running system: "Arch: sudo pacman -S ...\""""
+    if platform == "darwin":
+        return f"macOS: brew install {MACOS_PACKAGES[role]}" if role in MACOS_PACKAGES else "macOS: xcode-select --install"
+    if os_release is None:
+        try:
+            os_release = Path("/etc/os-release").read_text(encoding="utf-8")
+        except OSError:
+            os_release = ""
+    name, command, packages = LINUX_PACKAGES[linux_family(os_release)]
+    return f"{name}: {command} {packages[role]}"
+
+
 def check_prerequisites(work: Path, build_dir: Path, needed: int) -> dict:
     """Return the CMake executable and generator options, or raise with what to install."""
     windows = os.name == "nt"
@@ -188,7 +237,7 @@ def check_prerequisites(work: Path, build_dir: Path, needed: int) -> dict:
                         if windows else "Python 3.11 or later.")
     if not shutil.which("git"):
         problems.append("Git, which downloads the dependencies and the updates: in a terminal, type  "
-                        "winget install Git.Git" if windows else "Git (Ubuntu: sudo apt install git).")
+                        "winget install Git.Git" if windows else f"Git ({install_hint('git')}).")
     toolchain = {"cmake": cached_cmake(build_dir), "generator": [], "path": []}
     if windows:
         studio = find_visual_studio()
@@ -212,18 +261,19 @@ def check_prerequisites(work: Path, build_dir: Path, needed: int) -> dict:
         if not toolchain["cmake"]:
             toolchain["cmake"] = shutil.which("cmake")
             if not toolchain["cmake"]:
-                problems.append("CMake 3.21+ (Ubuntu: sudo apt install cmake ninja-build).")
+                problems.append(f"CMake 3.21+ ({install_hint('cmake')}).")
         if not any(shutil.which(c) for c in ("c++", "g++", "clang++")):
-            problems.append("A C++20 compiler (Ubuntu: sudo apt install g++).")
+            problems.append(f"A C++20 compiler ({install_hint('compiler')}).")
         if shutil.which("ninja"):
             toolchain["generator"] = ["--generator", "Ninja"]
         if sys.platform.startswith("linux"):
             probe = subprocess.run(["pkg-config", "--exists", "libavcodec", "libavformat", "libswscale", "libswresample", "gl", "x11"],
                                    capture_output=True) if shutil.which("pkg-config") else None
             if probe is None or probe.returncode:
-                problems.append("Development libraries (Ubuntu): sudo apt install pkg-config libgl-dev libx11-dev "
-                                "libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libasound2-dev libavcodec-dev "
-                                "libavformat-dev libavutil-dev libswresample-dev libswscale-dev")
+                problems.append(f"Development libraries ({install_hint('libs')})")
+            elif subprocess.run(["pkg-config", "--exists", "sdl2"], capture_output=True).returncode:
+                print("Warning: SDL2 development files not found, gamepads will not work, keyboard only "
+                      f"({install_hint('sdl2')}).", file=sys.stderr)
     if cache_entry(build_dir, "CMAKE_GENERATOR"):
         # An existing build tree keeps its generator; CMake rejects a different one.
         toolchain["generator"] = []
@@ -397,10 +447,9 @@ def project(env: dict, *arguments: str) -> None:
 
 def final_message(windows: bool) -> list[str]:
     launch = ("To start the game: double-click Play.bat (or type  python tools\\project.py run)."
-              if windows else "To start the game: python3 tools/project.py run")
+              if windows else "To start the game: ./play.sh (or type  python3 tools/project.py run).")
     return [launch,
-            "Keep the ISO where it is: the game reads it at every launch.",
-            "The game does not reach the menu yet: the log shown at the end of a run is what helps development."]
+            "Keep the ISO where it is: the game reads it at every launch."]
 
 
 # --- Main -------------------------------------------------------------------

@@ -73,12 +73,35 @@ To update: `git pull`, then `Installer.bat` again.
 <details>
 <summary><b>Linux</b></summary>
 
+Packages (`SDL2` is for gamepads), Debian/Ubuntu:
+
 ```bash
 sudo apt install git python3 cmake ninja-build g++ pkg-config libgl-dev libx11-dev libxrandr-dev libxinerama-dev \
-  libxcursor-dev libxi-dev libasound2-dev libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev
+  libxcursor-dev libxi-dev libvulkan1 libasound2-dev libavcodec-dev libavformat-dev libavutil-dev \
+  libswresample-dev libswscale-dev libsdl2-dev
+```
+
+Arch:
+
+```bash
+sudo pacman -S --needed base-devel git python cmake ninja pkgconf mesa vulkan-icd-loader libx11 libxrandr \
+  libxinerama libxcursor libxi alsa-lib ffmpeg sdl2-compat
+```
+
+Fedora (with RPM Fusion's FFmpeg, `ffmpeg-devel` instead of `ffmpeg-free-devel`):
+
+```bash
+sudo dnf install git python3 cmake ninja-build gcc-c++ pkgconf-pkg-config mesa-libGL-devel vulkan-loader \
+  libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel alsa-lib-devel \
+  ffmpeg-free-devel SDL2-devel
+```
+
+Then:
+
+```bash
 git clone https://github.com/literalynn/BurnoutDominatorReversed.git && cd BurnoutDominatorReversed
 python3 tools/install.py --iso "/path/to/Burnout Dominator.iso"
-python3 tools/project.py run
+./play.sh   # or: python3 tools/project.py run
 ```
 
 macOS is not verified yet.
@@ -110,7 +133,7 @@ Every key can be changed in **F1** → *Keyboard and mouse controls*: up to thre
 | **F9** | mark a glitch: notes the moment in the log, saves a screenshot and a save state in `marks/` |
 
 <details>
-<summary><b>Settings</b> (<code>settings.ini</code> next to <code>Play.bat</code>, also changed by F1)</summary>
+<summary><b>Settings</b> (<code>settings.ini</code> next to <code>Play.bat</code> and <code>play.sh</code>, also changed by F1)</summary>
 
 | Setting | Default | |
 |---|---|---|
