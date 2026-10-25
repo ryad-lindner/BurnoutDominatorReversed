@@ -53,6 +53,7 @@ python tools/project.py run
 | `--trace-calls 0xADDR,…` | log calls and returns of these guest functions |
 | `--trace-watch 0xADDR,…` | guest memory words printed with each trace line |
 | `--no-iso` | serve sectors from a virtual image of the extracted files instead of the ISO (different sector numbers) |
+| `--skip-intro` | leave out the logos and the intro movie for this run (`settings.ini` `skip_intro`) |
 | `--load-state [FILE]` | restore a save state before the game runs (default: the quick slot `local/states/quick.bdrstate`) |
 | `--state FILE` | save state slot used by F5 (save) and F7 (load) in the window |
 | `--save-state-at VSYNC` | save to the slot once this VSync is reached (for scripted or headless runs) |

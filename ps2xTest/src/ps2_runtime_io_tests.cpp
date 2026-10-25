@@ -749,6 +749,7 @@ void register_ps2_runtime_io_tests()
             settings.fxaa = true;
             settings.hudSmoothing = false;
             settings.keepSpeed = false;
+            settings.skipIntro = true;
             settings.aspect = "16:9";
             settings.volume = 40;
             settings.refreshRate = "144";
@@ -764,6 +765,7 @@ void register_ps2_runtime_io_tests()
             t.IsTrue(settings.fxaa, "fxaa round-trips");
             t.IsTrue(!settings.hudSmoothing, "hud_smoothing round-trips");
             t.IsTrue(!settings.keepSpeed, "keep_speed round-trips");
+            t.IsTrue(settings.skipIntro && !ps2x::HostSettings{}.skipIntro, "skip_intro round-trips and is off by default");
             t.Equals(settings.aspect, std::string("16:9"), "aspect round-trips");
             t.Equals(settings.volume, 40, "volume round-trips");
             t.Equals(settings.refreshRate, std::string("144"), "a frame rate above 60 round-trips");

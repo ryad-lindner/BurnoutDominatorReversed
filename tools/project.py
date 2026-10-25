@@ -394,6 +394,8 @@ def launch(args) -> None:
         command += ["--load-state", str(args.load_state.resolve())]
     if args.save_state_at:
         command += ["--save-state-at", str(args.save_state_at)]
+    if args.skip_intro:
+        command.append("--skip-intro")
     log = LOCAL / "logs" / (args.log or ("smoke.log" if "--headless" in command else "run.log"))
     log.parent.mkdir(parents=True, exist_ok=True)
     print("Running:", subprocess.list2cmdline(command), flush=True)
@@ -481,6 +483,8 @@ def main() -> int:
                    help="Restore this save state before the game runs (default: the quick slot)")
     p.add_argument("--save-state-at", type=int, default=0, metavar="VSYNC",
                    help="Save to the --state slot once this VSync is reached")
+    p.add_argument("--skip-intro", action="store_true",
+                   help="Leave out the logos and the intro movie for this run (settings.ini skip_intro)")
     p.add_argument("--vu-capture", action="store_true",
                    help="Record the VU1 programs the game runs into <work>/local/vu-programs; "
                         "configure and build then compile them")

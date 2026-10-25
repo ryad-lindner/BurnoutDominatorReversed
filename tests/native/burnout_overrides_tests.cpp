@@ -3,6 +3,7 @@
 // layout the game's parser expects. Also the text replacement of src/burnout_texts.cpp and the
 // frame rate wrappers of src/burnout_frame_rate.cpp.
 #include "../../src/burnout_frame_rate.h"
+#include "../../src/burnout_pages.h"
 #include "../../src/burnout_texts.h"
 #include "game_overrides.h"
 #include "ps2_runtime.h"
@@ -16,6 +17,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <initializer_list>
 #include <iostream>
 #include <iterator>
 #include <memory>
@@ -277,6 +279,69 @@ void testFrameRate() {
     for (const uint32_t address : {kSetRate, kSetStep, kCamera, kPowf, kMenuBox, kVBlankCount})
         g_ps2RecompiledFunctionTable[address >> 2] = nullptr;
 }
+void testPages() {
+    const auto page = [](const char* name) {
+        const std::string text(name);
+        return burnout::classifyPage(reinterpret_cast<const uint8_t*>(name), text.size() + 1);
+    };
+    using burnout::Page;
+    check(page("SU_Frequency") == Page::Frequency, "SU_Frequency is the frequency page");
+    check(page("su_movie") == Page::Movie && page("SU_MOVIE2") == Page::Movie2 && page("SU_Intro") == Page::Intro,
+          "the start-up pages are found by name, ignoring case");
+    check(page("SU_MainMenu") == Page::Other && page("SU_Movie3") == Page::Other && page("SU_Mov") == Page::Other &&
+              page("SU_PressStart") == Page::Other && page("") == Page::Other,
+          "other names, longer or shorter, are no special page");
+    check(page("DD_Profile_LoadSave") == Page::ProfileLoadSave, "DD_Profile_LoadSave is the boot's first page");
+    check(burnout::isSkippedPage(Page::Movie) && burnout::isSkippedPage(Page::Movie2) &&
+              !burnout::isSkippedPage(Page::Intro) && !burnout::isSkippedPage(Page::Frequency) &&
+              !burnout::isSkippedPage(Page::ProfileLoadSave) && !burnout::isSkippedPage(Page::Other),
+          "skip_intro leaves out SU_Movie and SU_Movie2 only");
+    // A name that ends where the readable bytes end is not read past them.
+    const uint8_t bare[] = {'S', 'U', '_', 'I', 'n', 't', 'r', 'o'};
+    check(burnout::classifyPage(bare, sizeof(bare)) == Page::Other && burnout::classifyPage(bare, 0) == Page::Other,
+          "the name is read only within the room given");
+
+    // skip_intro: the game's own name buffer becomes "SU_Intro", and nothing after the old name's
+    // NUL is written (the shortest buffer, for SU_Movie, holds 9 bytes).
+    for (const char* from : {"SU_Frequency", "SU_Movie", "SU_Movie2"}) {
+        char buffer[16] = {};
+        std::strcpy(buffer, from);
+        const size_t end = std::strlen(from) + 1;
+        buffer[end] = 'x';
+        burnout::IntroSkip skip(true);
+        const bool redirected = page(from) == Page::Frequency
+                                    ? skip.onFrequencySkip(reinterpret_cast<uint8_t*>(buffer))
+                                    : skip.onGoToPage(page(from), reinterpret_cast<uint8_t*>(buffer));
+        check(redirected && std::strcmp(buffer, "SU_Intro") == 0 && buffer[end] == 'x' && page(buffer) == Page::Intro,
+              std::string("skip_intro redirects ") + from + " to SU_Intro");
+    }
+
+    // Over a run: one redirect at the boot, and none once the game is past the boot's first pages.
+    // "+" marks the SU_Frequency the 50/60 Hz skip leaves.
+    const auto run = [&](bool on, std::initializer_list<const char*> pages) {
+        burnout::IntroSkip skip(on);
+        int redirects = 0;
+        for (const char* name : pages) {
+            const bool frequencySkip = name[0] == '+';
+            char buffer[32] = {};
+            std::strcpy(buffer, name + frequencySkip);
+            auto* bytes = reinterpret_cast<uint8_t*>(buffer);
+            const bool redirected = frequencySkip ? skip.onFrequencySkip(bytes) : skip.onGoToPage(page(buffer), bytes);
+            check(redirected == (std::strcmp(buffer, "SU_Intro") == 0 && std::strcmp(name + frequencySkip, "SU_Intro") != 0),
+                  std::string("the name is rewritten exactly when redirected: ") + name);
+            redirects += redirected;
+        }
+        return redirects;
+    };
+    check(run(true, {"DD_Profile_LoadSave", "+SU_Frequency", "SU_Intro", "SU_PressStart"}) == 1,
+          "the 50/60 Hz skip's SU_Frequency is redirected once");
+    check(run(true, {"DD_Profile_LoadSave", "SU_Frequency", "SU_Movie", "SU_Movie2", "SU_Intro"}) == 1,
+          "a SU_Frequency the game shows stays, then SU_Movie is redirected and SU_Movie2 after it is not");
+    check(run(true, {"SU_PressStart", "SU_Attract", "SU_Movie", "SU_Movie2"}) == 0,
+          "after a page past the boot (a restored state, attract mode) nothing is redirected");
+    check(run(true, {"SU_MainMenu", "+SU_Frequency"}) == 0, "nor is the 50/60 Hz skip of a later page change");
+    check(run(false, {"DD_Profile_LoadSave", "+SU_Frequency", "SU_Movie"}) == 0, "without skip_intro nothing is");
+}
 } // namespace
 
 int main() {
@@ -284,10 +349,11 @@ int main() {
     testRomVersion();
     testPcTexts();
     testFrameRate();
+    testPages();
     if (g_failures) {
         std::cerr << g_failures << " Burnout override check(s) failed\n";
         return 1;
     }
-    std::cout << "Burnout override tests passed (" << std::size(kExpected) << " bindings, ROM0 profile, frame rate)\n";
+    std::cout << "Burnout override tests passed (" << std::size(kExpected) << " bindings, ROM0 profile, frame rate, pages)\n";
     return 0;
 }
