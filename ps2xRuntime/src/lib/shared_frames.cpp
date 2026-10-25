@@ -9,6 +9,8 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace
@@ -32,8 +34,10 @@ namespace
     int g_pending = -1;
     intptr_t g_pendingReady = 0;
     bool g_active = false;
-    bool g_hasLuid = false;
-    uint8_t g_luid[8] = {};
+    uint8_t g_deviceId[16] = {}; // the Vulkan device's LUID or UUID
+    size_t g_deviceIdSize = 0;
+    uint8_t g_driverId[16] = {};
+    bool g_hasDriverId = false;
 
     void closeHandle(intptr_t handle)
     {
@@ -41,18 +45,22 @@ namespace
         if (handle)
             CloseHandle(reinterpret_cast<HANDLE>(handle));
 #else
-        (void)handle;
+        if (handle)
+            close(int(handle)); // a file descriptor
 #endif
     }
 }
 
 namespace ps2x::shared_frames
 {
-    void setDeviceLuid(const uint8_t luid[8])
+    void setDeviceId(const uint8_t *id, size_t size, const uint8_t *driver)
     {
         std::lock_guard<std::mutex> lock(g_mutex);
-        std::memcpy(g_luid, luid, sizeof(g_luid));
-        g_hasLuid = true;
+        g_deviceIdSize = size < sizeof(g_deviceId) ? size : sizeof(g_deviceId);
+        std::memcpy(g_deviceId, id, g_deviceIdSize);
+        g_hasDriverId = driver != nullptr;
+        if (driver)
+            std::memcpy(g_driverId, driver, sizeof(g_driverId));
     }
 
     int beginFrame()
@@ -92,9 +100,11 @@ namespace ps2x::shared_frames
     void publish(int slot, intptr_t ready)
     {
         std::lock_guard<std::mutex> lock(g_mutex);
-        if (!g_active)
+        if (!g_active) // the window stopped since beginFrame
         {
             closeHandle(ready);
+            closeHandle(g_slots[slot].memory);
+            g_slots[slot].memory = 0;
             g_slots[slot].owner = Owner::Free;
             return;
         }
@@ -113,9 +123,22 @@ namespace ps2x::shared_frames
         std::lock_guard<std::mutex> lock(g_mutex);
         g_slots[slot].owner = Owner::Free;
     }
+
+    void discard(int slot)
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        Slot &s = g_slots[slot];
+        closeHandle(s.memory);
+        s.memory = 0;
+        s.owner = Owner::Free;
+    }
 }
 
-#ifdef _WIN32
+#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
+#ifndef APIENTRY
+#define APIENTRY
+#endif
+
 // raylib's GLFW loads OpenGL for the window; rlgl has none of the entry points below.
 extern "C"
 {
@@ -134,9 +157,18 @@ namespace
     using GLubyte = unsigned char;
     using GLsync = struct __GLsync *;
 
-    constexpr GLenum kTexture2D = 0x0DE1, kRgba8 = 0x8058, kNumExtensions = 0x821D, kExtensions = 0x1F03, kVendor = 0x1F00;
-    constexpr GLenum kDedicatedMemoryObject = 0x9581, kHandleTypeOpaqueWin32 = 0x9587;
-    constexpr GLenum kLayoutShaderReadOnly = 0x9591, kDeviceLuid = 0x9599;
+    constexpr GLenum kTexture2D = 0x0DE1, kRgba8 = 0x8058, kNumExtensions = 0x821D, kExtensions = 0x1F03;
+    constexpr GLenum kDedicatedMemoryObject = 0x9581, kLayoutShaderReadOnly = 0x9591;
+#ifdef _WIN32
+    constexpr GLenum kHandleTypeOpaque = 0x9587, kDeviceId = 0x9599, kVendor = 0x1F00; // OPAQUE_WIN32, DEVICE_LUID
+    constexpr const char *kMemoryHandleExtension = "GL_EXT_memory_object_win32";
+    constexpr const char *kSemaphoreHandleExtension = "GL_EXT_semaphore_win32";
+#else
+    constexpr GLenum kHandleTypeOpaque = 0x9586, kDeviceId = 0x9597, kNumDeviceIds = 0x9596; // OPAQUE_FD, DEVICE_UUID, NUM_DEVICE_UUIDS
+    constexpr GLenum kDriverId = 0x9598, kRenderer = 0x1F01;                                  // DRIVER_UUID
+    constexpr const char *kMemoryHandleExtension = "GL_EXT_memory_object_fd";
+    constexpr const char *kSemaphoreHandleExtension = "GL_EXT_semaphore_fd";
+#endif
     constexpr GLenum kSyncGpuCommandsComplete = 0x9117, kAlreadySignaled = 0x911A, kConditionSatisfied = 0x911C;
 
     struct
@@ -151,12 +183,23 @@ namespace
         void(APIENTRY *CreateMemoryObjectsEXT)(GLsizei, GLuint *);
         void(APIENTRY *DeleteMemoryObjectsEXT)(GLsizei, const GLuint *);
         void(APIENTRY *MemoryObjectParameterivEXT)(GLuint, GLenum, const GLint *);
+#ifdef _WIN32
         void(APIENTRY *ImportMemoryWin32HandleEXT)(GLuint, GLuint64, GLenum, void *);
+#else
+        void(APIENTRY *ImportMemoryFdEXT)(GLuint, GLuint64, GLenum, GLint);
+#endif
         void(APIENTRY *TexStorageMem2DEXT)(GLenum, GLsizei, GLenum, GLsizei, GLsizei, GLuint, GLuint64);
         void(APIENTRY *GetUnsignedBytevEXT)(GLenum, GLubyte *);
+#ifndef _WIN32
+        void(APIENTRY *GetUnsignedBytei_vEXT)(GLenum, GLuint, GLubyte *);
+#endif
         void(APIENTRY *GenSemaphoresEXT)(GLsizei, GLuint *);
         void(APIENTRY *DeleteSemaphoresEXT)(GLsizei, const GLuint *);
+#ifdef _WIN32
         void(APIENTRY *ImportSemaphoreWin32HandleEXT)(GLuint, GLenum, void *);
+#else
+        void(APIENTRY *ImportSemaphoreFdEXT)(GLuint, GLenum, GLint);
+#endif
         void(APIENTRY *WaitSemaphoreEXT)(GLuint, GLuint, const GLuint *, GLuint, const GLuint *, const GLenum *);
         GLsync(APIENTRY *FenceSync)(GLenum, GLbitfield);
         GLenum(APIENTRY *ClientWaitSync)(GLsync, GLbitfield, GLuint64);
@@ -179,6 +222,115 @@ namespace
                 return true;
         return false;
     }
+
+    // The first error OpenGL has recorded, all cleared.
+    GLenum takeError()
+    {
+        const GLenum first = gl.GetError();
+        for (int i = 0; i < 8 && gl.GetError() != 0; ++i)
+        {
+        }
+        return first;
+    }
+
+    // What differs between Win32 handles and file descriptors. The imports return the OpenGL
+    // error that made them fail, or 0.
+#ifdef _WIN32
+    bool loadHandleImports()
+    {
+        return load(gl.ImportMemoryWin32HandleEXT, "glImportMemoryWin32HandleEXT") &&
+               load(gl.GetUnsignedBytevEXT, "glGetUnsignedBytevEXT") &&
+               load(gl.ImportSemaphoreWin32HandleEXT, "glImportSemaphoreWin32HandleEXT");
+    }
+
+    // Why the window cannot import the Vulkan device's images, or null when it can.
+    const char *deviceMismatch(const uint8_t *id, size_t size)
+    {
+        GLubyte luid[8] = {};
+        gl.GetUnsignedBytevEXT(kDeviceId, luid);
+        return size == sizeof(luid) && std::memcmp(luid, id, size) == 0 ? nullptr
+                                                                         : "the window's OpenGL context is on another GPU";
+    }
+
+    GLenum importMemory(GLuint memory, GLuint64 bytes, intptr_t handle)
+    {
+        gl.ImportMemoryWin32HandleEXT(memory, bytes, kHandleTypeOpaque, reinterpret_cast<void *>(handle));
+        return 0;
+    }
+
+    // After the storage: NVIDIA's Windows driver uses the handle until then.
+    void memoryImported(intptr_t handle) { closeHandle(handle); }
+
+    GLenum importSemaphore(GLuint semaphore, intptr_t handle)
+    {
+        gl.ImportSemaphoreWin32HandleEXT(semaphore, kHandleTypeOpaque, reinterpret_cast<void *>(handle));
+        closeHandle(handle);
+        return 0;
+    }
+#else
+    bool loadHandleImports()
+    {
+        return load(gl.ImportMemoryFdEXT, "glImportMemoryFdEXT") &&
+               load(gl.GetUnsignedBytei_vEXT, "glGetUnsignedBytei_vEXT") &&
+               load(gl.GetUnsignedBytevEXT, "glGetUnsignedBytevEXT") &&
+               load(gl.ImportSemaphoreFdEXT, "glImportSemaphoreFdEXT");
+    }
+
+    // Opaque descriptors work between a Vulkan and an OpenGL driver only when both UUIDs match.
+    const char *deviceMismatch(const uint8_t *id, size_t size)
+    {
+        GLint count = 0;
+        gl.GetIntegerv(kNumDeviceIds, &count);
+        bool sameDevice = false;
+        for (GLint i = 0; i < count && !sameDevice; ++i)
+        {
+            GLubyte uuid[16] = {};
+            gl.GetUnsignedBytei_vEXT(kDeviceId, GLuint(i), uuid);
+            sameDevice = size == sizeof(uuid) && std::memcmp(uuid, id, size) == 0;
+        }
+        if (!sameDevice)
+            return "the window's OpenGL context is on another GPU";
+        GLubyte driver[16] = {};
+        gl.GetUnsignedBytevEXT(kDriverId, driver);
+        if (!g_hasDriverId || std::memcmp(driver, g_driverId, sizeof(driver)) != 0)
+            return "the Vulkan and OpenGL drivers differ";
+        return nullptr;
+    }
+
+    // OpenGL owns a descriptor once it has taken it, so one is closed here only when the import
+    // did not happen or failed. An error left by an earlier call stops the import: it could not
+    // be told from a failed one. EXT_external_objects_fd gives OpenGL the descriptor on success
+    // only, so it stays the caller's after a failure. Mesa raises its errors before it takes the
+    // descriptor and closes it once taken, even if the driver then fails; other drivers are not
+    // known to, one reason they need BDR_SHARED_FRAMES=1.
+    GLenum importMemory(GLuint memory, GLuint64 bytes, intptr_t handle)
+    {
+        GLenum error = takeError();
+        if (error == 0)
+        {
+            gl.ImportMemoryFdEXT(memory, bytes, kHandleTypeOpaque, GLint(handle));
+            error = takeError();
+        }
+        if (error != 0)
+            closeHandle(handle);
+        return error;
+    }
+
+    void memoryImported(intptr_t) {}
+
+    GLenum importSemaphore(GLuint semaphore, intptr_t handle)
+    {
+        GLenum error = takeError();
+        if (error == 0)
+        {
+            gl.ImportSemaphoreFdEXT(semaphore, kHandleTypeOpaque, GLint(handle));
+            error = takeError();
+        }
+        if (error != 0)
+            closeHandle(handle);
+        return error;
+    }
+#endif
 
     struct WindowSlot
     {
@@ -204,36 +356,37 @@ namespace ps2x::shared_frames
             load(gl.GenTextures, "glGenTextures") && load(gl.DeleteTextures, "glDeleteTextures") &&
             load(gl.BindTexture, "glBindTexture") && load(gl.FenceSync, "glFenceSync") &&
             load(gl.ClientWaitSync, "glClientWaitSync") && load(gl.DeleteSync, "glDeleteSync");
-        if (!loaded || !hasExtension("GL_EXT_memory_object") || !hasExtension("GL_EXT_memory_object_win32") ||
-            !hasExtension("GL_EXT_semaphore") || !hasExtension("GL_EXT_semaphore_win32") ||
+        if (!loaded || !hasExtension("GL_EXT_memory_object") || !hasExtension(kMemoryHandleExtension) ||
+            !hasExtension("GL_EXT_semaphore") || !hasExtension(kSemaphoreHandleExtension) ||
             !load(gl.CreateMemoryObjectsEXT, "glCreateMemoryObjectsEXT") ||
             !load(gl.DeleteMemoryObjectsEXT, "glDeleteMemoryObjectsEXT") ||
             !load(gl.MemoryObjectParameterivEXT, "glMemoryObjectParameterivEXT") ||
-            !load(gl.ImportMemoryWin32HandleEXT, "glImportMemoryWin32HandleEXT") ||
-            !load(gl.TexStorageMem2DEXT, "glTexStorageMem2DEXT") || !load(gl.GetUnsignedBytevEXT, "glGetUnsignedBytevEXT") ||
+            !load(gl.TexStorageMem2DEXT, "glTexStorageMem2DEXT") || !loadHandleImports() ||
             !load(gl.GenSemaphoresEXT, "glGenSemaphoresEXT") || !load(gl.DeleteSemaphoresEXT, "glDeleteSemaphoresEXT") ||
-            !load(gl.ImportSemaphoreWin32HandleEXT, "glImportSemaphoreWin32HandleEXT") ||
             !load(gl.WaitSemaphoreEXT, "glWaitSemaphoreEXT"))
         {
             std::printf("[gs] frames go through host memory: OpenGL cannot import Vulkan images\n");
             return false;
         }
-        // shortcut: tested on NVIDIA only, where the picture was checked; others keep host memory
-        // unless BDR_SHARED_FRAMES=1, until someone checks the picture on their drivers.
-        const char *vendor = reinterpret_cast<const char *>(gl.GetString(kVendor));
-        if (!(setting && *setting == '1') && !(vendor && std::strstr(vendor, "NVIDIA")))
+        // shortcut: tested on NVIDIA (Windows) and Mesa's radeonsi (Linux), where the picture was
+        // checked; others keep host memory unless BDR_SHARED_FRAMES=1, until someone checks the
+        // picture on their drivers.
+#ifdef _WIN32
+        const char *tested = "NVIDIA", *driver = reinterpret_cast<const char *>(gl.GetString(kVendor));
+#else
+        const char *tested = "radeonsi", *driver = reinterpret_cast<const char *>(gl.GetString(kRenderer));
+#endif
+        if (!(setting && *setting == '1') && !(driver && std::strstr(driver, tested)))
         {
-            std::printf("[gs] frames go through host memory: frames shared with OpenGL are only tested on NVIDIA "
-                        "(BDR_SHARED_FRAMES=1 tries them)\n");
+            std::printf("[gs] frames go through host memory: frames shared with OpenGL are only tested on %s "
+                        "(BDR_SHARED_FRAMES=1 tries them)\n",
+                        tested);
             return false;
         }
-        GLubyte luid[8] = {};
-        gl.GetUnsignedBytevEXT(kDeviceLuid, luid);
         std::lock_guard<std::mutex> lock(g_mutex);
-        if (!g_hasLuid || std::memcmp(luid, g_luid, sizeof(luid)) != 0)
+        if (const char *mismatch = g_deviceIdSize ? deviceMismatch(g_deviceId, g_deviceIdSize) : "no Vulkan device to share them")
         {
-            std::printf("[gs] frames go through host memory: %s\n",
-                        g_hasLuid ? "the window's OpenGL context is on another GPU" : "no Vulkan device to share them");
+            std::printf("[gs] frames go through host memory: %s\n", mismatch);
             return false;
         }
         g_active = g_importing = true;
@@ -250,6 +403,11 @@ namespace ps2x::shared_frames
         if (g_pending >= 0)
             g_slots[g_pending].owner = Owner::Free;
         g_pending = -1;
+        for (Slot &s : g_slots) // images the window never took; no slot is filled again
+        {
+            closeHandle(s.memory);
+            s.memory = 0;
+        }
     }
 
     void releaseDrawn()
@@ -291,45 +449,51 @@ namespace ps2x::shared_frames
             g_pending = -1;
             g_pendingReady = 0;
         }
-        for (int i = 0; i < 8 && gl.GetError() != 0; ++i) // errors left by earlier calls
-        {
-        }
+        takeError(); // errors left by earlier calls
+        const auto giveUp = [](GLenum error) {
+            std::printf("[gs] frames go through host memory from now on: OpenGL error 0x%x importing one\n", error);
+            stopWindow();
+            return false;
+        };
         WindowSlot &s = g_window[slot];
         if (memory)
         {
             if (s.texture)
                 gl.DeleteTextures(1, &s.texture);
+            s.texture = 0;
             if (s.memory)
                 gl.DeleteMemoryObjectsEXT(1, &s.memory);
             const GLint dedicated = 1; // Granite gives external images allocations of their own
             gl.CreateMemoryObjectsEXT(1, &s.memory);
             gl.MemoryObjectParameterivEXT(s.memory, kDedicatedMemoryObject, &dedicated);
-            gl.ImportMemoryWin32HandleEXT(s.memory, bytes, kHandleTypeOpaqueWin32, reinterpret_cast<void *>(memory));
+            if (const GLenum error = importMemory(s.memory, bytes, memory))
+            {
+                gl.DeleteMemoryObjectsEXT(1, &s.memory);
+                s.memory = 0;
+                closeHandle(ready);
+                return giveUp(error);
+            }
             gl.GenTextures(1, &s.texture);
             gl.BindTexture(kTexture2D, s.texture);
             gl.TexStorageMem2DEXT(kTexture2D, 1, kRgba8, GLsizei(width), GLsizei(height), s.memory, 0);
             gl.BindTexture(kTexture2D, 0);
-            closeHandle(memory); // after the storage: NVIDIA's Windows driver uses the handle until then
+            memoryImported(memory);
             s.width = width;
             s.height = height;
         }
         GLuint semaphore = 0;
         gl.GenSemaphoresEXT(1, &semaphore);
-        gl.ImportSemaphoreWin32HandleEXT(semaphore, kHandleTypeOpaqueWin32, reinterpret_cast<void *>(ready));
-        closeHandle(ready);
+        const GLenum importError = importSemaphore(semaphore, ready);
         const GLenum layout = kLayoutShaderReadOnly; // the backend's release barrier
-        gl.WaitSemaphoreEXT(semaphore, 0, nullptr, 1, &s.texture, &layout);
+        if (importError == 0)
+            gl.WaitSemaphoreEXT(semaphore, 0, nullptr, 1, &s.texture, &layout);
         gl.DeleteSemaphoresEXT(1, &semaphore);
         // The frame shown until now goes back once the GPU is past this. Placed before the wait,
         // which it need not follow, slots came back sooner and a race ran 4% slower at 240 Hz.
         if (g_shown >= 0)
             g_window[g_shown].drawn = gl.FenceSync(kSyncGpuCommandsComplete, 0);
-        if (const GLenum error = gl.GetError(); error != 0) // the fence's too
-        {
-            std::printf("[gs] frames go through host memory from now on: OpenGL error 0x%x importing one\n", error);
-            stopWindow();
-            return false;
-        }
+        if (const GLenum error = importError ? importError : gl.GetError(); error != 0) // the fence's too
+            return giveUp(error);
         g_shown = slot;
         out = {s.texture, s.width, s.height};
         return true;
