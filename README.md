@@ -145,7 +145,7 @@ Every key can be changed in **F1** → *Keyboard and mouse controls*: up to thre
 | `super_sampling` | 4 | samples per pixel: 1, 2, 4, 8 or 16 |
 | `high_resolution` | true | a higher resolution built from the samples: 2x (1280 pixels wide) with 4 or 8 samples, 4x (2560) with 16 |
 | `fxaa` | false | FXAA on the finished picture |
-| `hud_smoothing` | true | the race HUD smooth instead of blocky at 2x and 4x |
+| `hud_smoothing` | true | the race HUD, menu art and menu text smooth instead of blocky at 2x and 4x |
 | `progressive_scan` | true | whole frames, no interlacing lines |
 | `fast_loading` | true | loading screens run faster than real time |
 | `skip_intro` | false | leaves out the logos and the intro movie: the game goes straight to the short intro screen that leads to the start screen, with its music (from the next start; `--skip-intro` does it for one run) |

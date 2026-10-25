@@ -32,10 +32,16 @@ parallel_gs_replace("transfer_state.fifo_readback_128b_size = required_bytes / 1
 # a pixel reads the same texel and a bilinear HUD texture shows its texels as blocks at 2x
 # and 4x. Sprites that sample a palette texture (PSMT8, PSMT4: HUD and menu art, never a
 # render target) with LINEAR magnification rasterize and interpolate per sample when
-# bdr_smooth_ui_sprites (the ubershader snaps attributes along with the raster).
+# bdr_smooth_ui_sprites (the ubershader snaps attributes along with the raster). Flat
+# triangles, the front end's art and text, are snapped by triangle_setup.comp, which takes
+# them for UI: such triangles get bit 27 of their texture word, unused by paraLLEl-GS, and
+# the shaders built by tools/pgs_shader.py (below) interpolate them per sample.
+parallel_gs_replace("namespace ParallelGS\n{\n" "namespace ParallelGS\n{\nextern bool bdr_smooth_ui_sprites;\n\nstatic bool bdr_smooth_ui(const PRIMBits &prim, const TEX0Bits &tex0, const TEX1Bits &tex1)\n{\n\treturn bdr_smooth_ui_sprites && prim.TME && tex1.MMAG == TEX1Bits::LINEAR && (tex0.PSM == PSMT8 || tex0.PSM == PSMT4);\n}\n\n")
 parallel_gs_replace("void GSInterface::set_hacks(const Hacks &hacks_)" "bool bdr_smooth_ui_sprites = false;\n\nvoid GSInterface::set_hacks(const Hacks &hacks_)")
 parallel_gs_replace("\t\tprim_attr.state |= 1u << STATE_BIT_SNAP_RASTER;\n\t\tprim_attr.state |= 1u << STATE_BIT_SNAP_ATTRIBUTE;\n\t\tprim_attr.state &= ~(1u << STATE_BIT_MULTISAMPLE);"
-    "\t\textern bool bdr_smooth_ui_sprites; // defined further down; GCC and Clang need it declared before this template body\n\t\tif (!(bdr_smooth_ui_sprites && prim.desc.TME && ctx.tex1.desc.MMAG == TEX1Bits::LINEAR &&\n\t\t      (ctx.tex0.desc.PSM == PSMT8 || ctx.tex0.desc.PSM == PSMT4)))\n\t\t\tprim_attr.state |= (1u << STATE_BIT_SNAP_RASTER) | (1u << STATE_BIT_SNAP_ATTRIBUTE);\n\t\tprim_attr.state &= ~(1u << STATE_BIT_MULTISAMPLE);")
+    "\t\tif (!bdr_smooth_ui(prim.desc, ctx.tex0.desc, ctx.tex1.desc))\n\t\t\tprim_attr.state |= (1u << STATE_BIT_SNAP_RASTER) | (1u << STATE_BIT_SNAP_ATTRIBUTE);\n\t\tprim_attr.state &= ~(1u << STATE_BIT_MULTISAMPLE);")
+parallel_gs_replace("\t\tif ((prim_attr.state & (1u << STATE_BIT_MULTISAMPLE)) != 0)\n\t\t\tprim_attr.state &= ~(1u << STATE_BIT_Z_WRITE);\n\t}\n"
+    "\t\tif ((prim_attr.state & (1u << STATE_BIT_MULTISAMPLE)) != 0)\n\t\t\tprim_attr.state &= ~(1u << STATE_BIT_Z_WRITE);\n\t}\n\telse if (num_vertices == 3 && bdr_smooth_ui(prim.desc, ctx.tex0.desc, ctx.tex1.desc))\n\t\tprim_attr.tex |= 1u << 27;\n")
 parallel_gs_use_patched(${patch_file} gs_interface_patched.cpp)
 
 # compute_page_rect: max_block_x/y are taken modulo the blocks of a page, so
@@ -49,13 +55,45 @@ parallel_gs_replace("\tif (block_offset != 0 || single_page_rect)\n\t{"
     "\tif (block_offset != 0 && !single_page_rect && (max_block_x < (x >> layout.block_width_log2) || max_block_y < (y >> layout.block_height_log2)))\n\t{\n\t\trect.page_width++;\n\t}\n\telse if (block_offset != 0 || single_page_rect)\n\t{")
 parallel_gs_use_patched(${patch_file} gs_util_patched.cpp)
 
+# The menu smoothing shaders (see HUD smoothing above) replace the checkout's, with the same
+# bindings, so they keep its reflected layouts. Their headers name the sources they were
+# built from and hash them: a paraLLEl-GS update must rebuild them with tools/pgs_shader.py.
+file(READ "${parallel_gs_SOURCE_DIR}/gs/shaders/slangmosh.hpp" patched_slangmosh)
+foreach(shader triangle_setup single_sample_heuristic)
+    set(header "${CMAKE_CURRENT_LIST_DIR}/../src/lib/gs/shaders/pgs_${shader}.spv.h")
+    file(STRINGS "${header}" shader_sources REGEX "^// pgs-sources: ")
+    file(STRINGS "${header}" shader_hash REGEX "^// pgs-sha256: ")
+    string(REPLACE "// pgs-sources: " "" shader_sources "${shader_sources}")
+    string(REPLACE " " ";" shader_sources "${shader_sources}")
+    string(REPLACE "// pgs-sha256: " "" shader_hash "${shader_hash}")
+    set(source_text "")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${header}")
+    foreach(source ${shader_sources})
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${parallel_gs_SOURCE_DIR}/gs/shaders/${source}")
+        file(READ "${parallel_gs_SOURCE_DIR}/gs/shaders/${source}" text)
+        string(REPLACE "\r\n" "\n" text "${text}")
+        string(APPEND source_text "${text}")
+    endforeach()
+    string(SHA256 source_hash "${source_text}")
+    if(NOT source_hash STREQUAL shader_hash)
+        message(FATAL_ERROR "pgs_${shader}.spv.h was built from other paraLLEl-GS sources: run tools/pgs_shader.py")
+    endif()
+    string(REGEX REPLACE "this->${shader} = device\\.request_program\\(spirv_bank \\+ [0-9]+, [0-9]+, &layout\\);"
+        "this->${shader} = device.request_program(pgs_${shader}_spirv, sizeof(pgs_${shader}_spirv), &layout);" replaced "${patched_slangmosh}")
+    if(replaced STREQUAL patched_slangmosh)
+        message(FATAL_ERROR "paraLLEl-GS patch for slangmosh.hpp (${shader}) does not match the pinned source")
+    endif()
+    set(patched_slangmosh "${replaced}")
+endforeach()
+file(CONFIGURE OUTPUT "${parallel_gs_BINARY_DIR}/slangmosh_patched.hpp" CONTENT "${patched_slangmosh}" @ONLY)
+
 # 4x scan-out: with 16 samples a pixel (ordered 4x4 grid) the high-resolution scan-out
 # shows each sample as a pixel, 2560 pixels wide, instead of the four quadrant averages at
 # 1280. The sample shader comes from ps2xRuntime/src/lib/gs/shaders/pgs_sample_circuit.frag
 # (tools/pgs_shader.py); the rest scales the circuit images, scissors and viewports by 4.
 set(patch_file gs/gs_renderer.cpp)
 file(READ "${parallel_gs_SOURCE_DIR}/${patch_file}" patch_source)
-parallel_gs_replace("#include \"shaders/slangmosh.hpp\"" "#include \"shaders/slangmosh.hpp\"\n#include \"pgs_sample_circuit.spv.h\"")
+parallel_gs_replace("#include \"shaders/slangmosh.hpp\"" "#include \"pgs_sample_circuit.spv.h\"\n#include \"pgs_triangle_setup.spv.h\"\n#include \"pgs_single_sample_heuristic.spv.h\"\n#include \"slangmosh_patched.hpp\"")
 parallel_gs_replace("\tsample_quad[0] = device_->request_program(shaders.quad, shaders.sample_circuit[0]);"
     "\tsample_quad[0] = device_->request_program(shaders.quad, device_->request_shader(pgs_sample_circuit_spirv, sizeof(pgs_sample_circuit_spirv), &shaders.sample_circuit[0]->get_layout()));")
 parallel_gs_replace("\tif (super_samples > 1)\n\t{\n\t\tvalid_extent.width *= 2;\n\t\tvalid_extent.height *= 2;\n\t}"
@@ -114,4 +152,4 @@ parallel_gs_replace("\tsize_t num_tasks = tasks.size();\n\tsize_t target_threads
 parallel_gs_replace("\tinit_luts();\n\n\tkick_compilation_tasks();\n"
     "\tinit_luts();\n\n\tbdr_precompile_options = options;\n\tkick_compilation_tasks();\n")
 parallel_gs_use_patched(${patch_file} gs_renderer_patched.cpp)
-target_include_directories(parallel-gs PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../src/lib/gs/shaders")
+target_include_directories(parallel-gs PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../src/lib/gs/shaders" "${parallel_gs_BINARY_DIR}")
