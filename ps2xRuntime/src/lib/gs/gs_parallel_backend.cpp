@@ -22,6 +22,10 @@
 #include <cstring>
 #include <mutex>
 #include <stdexcept>
+#ifndef _WIN32
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 namespace ParallelGS
 {
@@ -31,6 +35,23 @@ namespace ParallelGS
 namespace
 {
     constexpr size_t VramSize = 4 * 1024 * 1024;
+
+    // The handle the window takes, or 0 for none. shared_frames reads 0 as "none", which a file
+    // descriptor can be once stdin is closed: descriptors are moved above 2.
+    intptr_t sharedHandle(const Vulkan::ExternalHandle &exported)
+    {
+#ifdef _WIN32
+        return intptr_t(exported.handle);
+#else
+        if (exported.handle < 0)
+            return 0;
+        if (exported.handle > 2)
+            return exported.handle;
+        const int moved = fcntl(exported.handle, F_DUPFD_CLOEXEC, 3);
+        close(exported.handle);
+        return moved < 0 ? 0 : moved;
+#endif
+    }
 
     uint64_t word(const void *data)
     {
@@ -354,9 +375,16 @@ namespace
                 throw std::runtime_error("paraLLEl-GS initialization failed");
             gs.set_signal_interface(this);
             const auto &features = vulkan.device.get_device_features();
+#ifdef _WIN32
             shareFrames = features.supports_external && features.vk11_props.deviceLUIDValid;
             if (shareFrames)
-                ps2x::shared_frames::setDeviceLuid(features.vk11_props.deviceLUID);
+                ps2x::shared_frames::setDeviceId(features.vk11_props.deviceLUID, VK_LUID_SIZE);
+#else
+            // RADV reports no LUID: the window finds the device by its UUID, and the driver by its own.
+            shareFrames = features.supports_external;
+            if (shareFrames)
+                ps2x::shared_frames::setDeviceId(features.vk11_props.deviceUUID, VK_UUID_SIZE, features.vk11_props.driverUUID);
+#endif
         }
 
         ~ParallelBackend() override
@@ -621,7 +649,7 @@ namespace
             // Readbacks older than this frame, which a frame read back later must not return.
             readbacks[0].pending = readbacks[1].pending = false;
             const auto giveUp = [&] {
-                ps2x::shared_frames::release(slot);
+                ps2x::shared_frames::discard(slot);
                 shareFrames = false; // readbacks from the next frame on
                 std::printf("[gs] frames go through host memory from now on: Vulkan cannot share them\n");
                 return PresentationFrame{};
@@ -634,13 +662,13 @@ namespace
                 info.initial_layout = VK_IMAGE_LAYOUT_UNDEFINED;
                 info.misc = Vulkan::IMAGE_MISC_EXTERNAL_MEMORY_BIT;
                 image = device.create_image(info);
-                const Vulkan::ExternalHandle memory = image ? image->export_handle() : Vulkan::ExternalHandle{};
-                if (memory.handle == Vulkan::ExternalHandle{}.handle)
+                const intptr_t memory = image ? sharedHandle(image->export_handle()) : 0;
+                if (!memory)
                 {
                     image.reset();
                     return giveUp();
                 }
-                ps2x::shared_frames::setImage(slot, intptr_t(memory.handle), image->get_allocation().get_size(), width, height);
+                ps2x::shared_frames::setImage(slot, memory, image->get_allocation().get_size(), width, height);
             }
             Vulkan::Semaphore ready = device.request_semaphore_external(
                 VK_SEMAPHORE_TYPE_BINARY, Vulkan::ExternalHandle::get_opaque_semaphore_handle_type());
@@ -670,10 +698,10 @@ namespace
             Vulkan::Fence copied;
             device.submit(cmd, &copied);
             device.submit_empty(Vulkan::CommandBuffer::Type::Generic, nullptr, ready.get());
-            const Vulkan::ExternalHandle readyHandle = ready->export_to_handle();
-            if (readyHandle.handle == Vulkan::ExternalHandle{}.handle)
+            const intptr_t readyHandle = sharedHandle(ready->export_to_handle());
+            if (!readyHandle)
                 return giveUp();
-            ps2x::shared_frames::publish(slot, intptr_t(readyHandle.handle));
+            ps2x::shared_frames::publish(slot, readyHandle);
 
             if (sharedCopy)
                 sharedCopy->wait();
